@@ -17,7 +17,7 @@ export class MapSphereNode extends MapNode
 	 * 
 	 * Applied to the map view on initialization.
 	 */
-        public static baseGeometry: BufferGeometry = new MapSphereNodeGeometry(UnitsUtils.EARTH_RADIUS, 64, 64, 0, 0, 0);
+	public static baseGeometry: BufferGeometry = new MapSphereNodeGeometry(UnitsUtils.EARTH_RADIUS, 64, 64, 0, 0, 0);
 
 	/**
 	 * Base scale of the node.
@@ -33,11 +33,11 @@ export class MapSphereNode extends MapNode
 	 */
 	public static segments: number = 80;
 
-        public constructor(parentNode = null, mapView = null, location = QuadTreePosition.root, level = 0, x = 0, y = 0)
-        {
-                const material = new MeshBasicMaterial({wireframe: false});
+	public constructor(parentNode = null, mapView = null, location = QuadTreePosition.root, level = 0, x = 0, y = 0)
+	{
+		const material = new MeshBasicMaterial({wireframe: false});
 
-                super(parentNode, mapView, location, level, x, y, MapSphereNode.createGeometry(level, x, y), material);
+		super(parentNode, mapView, location, level, x, y, MapSphereNode.createGeometry(level, x, y), material);
 	
 		this.applyScaleNode();
 	
@@ -62,13 +62,13 @@ export class MapSphereNode extends MapNode
 	 * @param x - X tile position.
 	 * @param y - Y tile position.
 	 */
-        public static createGeometry(zoom: number, x: number, y: number): MapSphereNodeGeometry
-        {
-                const max = 40;
-                const segments = Math.max(1, Math.floor(MapSphereNode.segments * (max / (zoom + 1)) / max));
+	public static createGeometry(zoom: number, x: number, y: number): MapSphereNodeGeometry
+	{
+		const max = 40;
+		const segments = Math.max(1, Math.floor(MapSphereNode.segments * (max / (zoom + 1)) / max));
 
-                return new MapSphereNodeGeometry(1, segments, segments, zoom, x, y);
-        }
+		return new MapSphereNodeGeometry(1, segments, segments, zoom, x, y);
+	}
 
 	/** 
 	 * Apply scale and offset position to the sphere node geometry.

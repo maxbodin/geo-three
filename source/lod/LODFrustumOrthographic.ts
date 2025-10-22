@@ -46,7 +46,7 @@ export class LODFrustumOrthographic extends LODFrustum
 		frustum.setFromProjectionMatrix(projection);
 		camera.getWorldPosition(pov);
 
-        // @ts-ignore
+		// @ts-ignore
 		view.children[0].traverse((obj) => 
 		{
 			const node = obj as MapPlaneNode&Object3D;
