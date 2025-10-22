@@ -1,4 +1,4 @@
-import { Texture, RGBAFormat, LinearFilter, Mesh, REVISION, BufferGeometry, Float32BufferAttribute, Vector2, Vector3, MeshBasicMaterial, MeshPhongMaterial, Vector4, ShaderMaterial, Matrix4, Quaternion, TextureLoader, NearestFilter, Raycaster, DoubleSide, Uint32BufferAttribute, Frustum, Color } from 'three';
+import { Texture, RGBAFormat, LinearFilter, Mesh, REVISION, BufferGeometry, Float32BufferAttribute, Vector2, Vector3, MeshBasicMaterial, MeshPhongMaterial, Matrix4, Quaternion, NearestFilter, Raycaster, DoubleSide, Uint32BufferAttribute, Frustum, Box3, Color } from 'three';
 
 /*! *****************************************************************************
 Copyright (c) Microsoft Corporation.
@@ -652,9 +652,12 @@ MapHeightNode.baseGeometry = MapPlaneNode.geometry;
 MapHeightNode.baseScale = new Vector3(UnitsUtils.EARTH_PERIMETER, 1, UnitsUtils.EARTH_PERIMETER);
 
 class MapSphereNodeGeometry extends BufferGeometry {
-    constructor(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength) {
+    constructor(radius, widthSegments, heightSegments, zoom, tileX, tileY) {
         super();
-        const thetaEnd = thetaStart + thetaLength;
+        const bounds = UnitsUtils.tileBounds(zoom, tileX, tileY);
+        const tileRange = Math.pow(2, zoom);
+        const isTopTile = tileY === 0;
+        const isBottomTile = tileY === tileRange - 1;
         let index = 0;
         const grid = [];
         const vertex = new Vector3();
@@ -666,13 +669,30 @@ class MapSphereNodeGeometry extends BufferGeometry {
         for (let iy = 0; iy <= heightSegments; iy++) {
             const verticesRow = [];
             const v = iy / heightSegments;
+            const mercatorY = bounds[2] + (1 - v) * bounds[3];
+            let latitude;
+            if (isTopTile && iy === 0) {
+                latitude = Math.PI / 2;
+            }
+            else if (isBottomTile && iy === heightSegments) {
+                latitude = -Math.PI / 2;
+            }
+            else {
+                latitude = Math.atan(Math.sinh(mercatorY / MapSphereNodeGeometry.WEB_MERCATOR_RADIUS));
+            }
+            const sinLat = Math.sin(latitude);
+            const cosLat = Math.cos(latitude);
             for (let ix = 0; ix <= widthSegments; ix++) {
                 const u = ix / widthSegments;
-                vertex.x = -radius * Math.cos(phiStart + u * phiLength) * Math.sin(thetaStart + v * thetaLength);
-                vertex.y = radius * Math.cos(thetaStart + v * thetaLength);
-                vertex.z = radius * Math.sin(phiStart + u * phiLength) * Math.sin(thetaStart + v * thetaLength);
+                const mercatorX = bounds[0] + u * bounds[1];
+                const longitude = mercatorX / MapSphereNodeGeometry.WEB_MERCATOR_RADIUS;
+                const sinLon = Math.sin(longitude);
+                const cosLon = Math.cos(longitude);
+                vertex.x = radius * cosLon * cosLat;
+                vertex.y = radius * sinLat;
+                vertex.z = -radius * sinLon * cosLat;
                 vertices.push(vertex.x, vertex.y, vertex.z);
-                normal.set(vertex.x, vertex.y, vertex.z).normalize();
+                normal.set(cosLon * cosLat, sinLat, -sinLon * cosLat).normalize();
                 normals.push(normal.x, normal.y, normal.z);
                 uvs.push(u, 1 - v);
                 verticesRow.push(index++);
@@ -685,10 +705,10 @@ class MapSphereNodeGeometry extends BufferGeometry {
                 const b = grid[iy][ix];
                 const c = grid[iy + 1][ix];
                 const d = grid[iy + 1][ix + 1];
-                if (iy !== 0 || thetaStart > 0) {
+                if (!(isTopTile && iy === 0)) {
                     indices.push(a, b, d);
                 }
-                if (iy !== heightSegments - 1 || thetaEnd < Math.PI) {
+                if (!(isBottomTile && iy === heightSegments - 1)) {
                     indices.push(b, c, d);
                 }
             }
@@ -699,50 +719,11 @@ class MapSphereNodeGeometry extends BufferGeometry {
         this.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
     }
 }
+MapSphereNodeGeometry.WEB_MERCATOR_RADIUS = UnitsUtils.WEB_MERCATOR_MAX_EXTENT / Math.PI;
 
 class MapSphereNode extends MapNode {
     constructor(parentNode = null, mapView = null, location = QuadTreePosition.root, level = 0, x = 0, y = 0) {
-        let bounds = UnitsUtils.tileBounds(level, x, y);
-        const vertexShader = `
-		varying vec3 vPosition;
-
-		void main() {
-			vPosition = position;
-			gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-		}
-		`;
-        const fragmentShader = `
-		#define PI 3.1415926538
-		varying vec3 vPosition;
-		uniform sampler2D uTexture;
-		uniform vec4 webMercatorBounds;
-
-		void main() {
-			// this could also be a constant, but for some reason using a constant causes more visible tile gaps at high zoom
-			float radius = length(vPosition);
-
-			float latitude = asin(vPosition.y / radius);
-			float longitude = atan(-vPosition.z, vPosition.x);
-
-			float web_mercator_x = radius * longitude;
-			float web_mercator_y = radius * log(tan(PI / 4.0 + latitude / 2.0));
-			float y = (web_mercator_y - webMercatorBounds.z) / webMercatorBounds.w;
-			float x = (web_mercator_x - webMercatorBounds.x) / webMercatorBounds.y;
-
-			vec4 color = texture2D(uTexture, vec2(x, y));
-			gl_FragColor = color;
-			${parseInt(REVISION) < 152 ? '' : `
-				#include <tonemapping_fragment>
-				#include ${parseInt(REVISION) >= 154 ? '<colorspace_fragment>' : '<encodings_fragment>'}
-				`}
-		}
-		`;
-        let vBounds = new Vector4(...bounds);
-        const material = new ShaderMaterial({
-            uniforms: { uTexture: { value: new Texture() }, webMercatorBounds: { value: vBounds } },
-            vertexShader: vertexShader,
-            fragmentShader: fragmentShader
-        });
+        const material = new MeshBasicMaterial({ wireframe: false });
         super(parentNode, mapView, location, level, x, y, MapSphereNode.createGeometry(level, x, y), material);
         this.applyScaleNode();
         this.matrixAutoUpdate = false;
@@ -760,30 +741,9 @@ class MapSphereNode extends MapNode {
         });
     }
     static createGeometry(zoom, x, y) {
-        const range = Math.pow(2, zoom);
         const max = 40;
-        const segments = Math.floor(MapSphereNode.segments * (max / (zoom + 1)) / max);
-        const lon1 = x > 0 ? UnitsUtils.webMercatorToLongitude(zoom, x) + Math.PI : 0;
-        const lon2 = x < range - 1 ? UnitsUtils.webMercatorToLongitude(zoom, x + 1) + Math.PI : 2 * Math.PI;
-        const phiStart = lon1;
-        const phiLength = lon2 - lon1;
-        const lat1 = y > 0 ? UnitsUtils.webMercatorToLatitude(zoom, y) : Math.PI / 2;
-        const lat2 = y < range - 1 ? UnitsUtils.webMercatorToLatitude(zoom, y + 1) : -Math.PI / 2;
-        const thetaLength = lat1 - lat2;
-        const thetaStart = Math.PI - (lat1 + Math.PI / 2);
-        return new MapSphereNodeGeometry(1, segments, segments, phiStart, phiLength, thetaStart, thetaLength);
-    }
-    applyTexture(image) {
-        return __awaiter(this, void 0, void 0, function* () {
-            const textureLoader = new TextureLoader();
-            const texture = textureLoader.load(image.src, function () {
-                if (parseInt(REVISION) >= 152) {
-                    texture.colorSpace = 'srgb';
-                }
-            });
-            this.material.uniforms.uTexture.value = texture;
-            this.material.uniforms.uTexture.needsUpdate = true;
-        });
+        const segments = Math.max(1, Math.floor(MapSphereNode.segments * (max / (zoom + 1)) / max));
+        return new MapSphereNodeGeometry(1, segments, segments, zoom, x, y);
     }
     applyScaleNode() {
         this.geometry.computeBoundingBox();
@@ -826,7 +786,7 @@ class MapSphereNode extends MapNode {
         }
     }
 }
-MapSphereNode.baseGeometry = new MapSphereNodeGeometry(UnitsUtils.EARTH_RADIUS, 64, 64, 0, 2 * Math.PI, 0, Math.PI);
+MapSphereNode.baseGeometry = new MapSphereNodeGeometry(UnitsUtils.EARTH_RADIUS, 64, 64, 0, 0, 0);
 MapSphereNode.baseScale = new Vector3(1, 1, 1);
 MapSphereNode.segments = 80;
 
@@ -850,7 +810,7 @@ class MapHeightNodeShader extends MapHeightNode {
 			#include <fog_vertex>
 	
 			// Calculate height of the title
-			vec4 _theight = texture2D(heightMap, vUv);
+			vec4 _theight = texture2D(heightMap, vMapUv);
 			float _height = ((_theight.r * 255.0 * 65536.0 + _theight.g * 255.0 * 256.0 + _theight.b * 255.0) * 0.1) - 10000.0;
 			vec3 _transformed = position + _height * normal;
 	
@@ -1393,7 +1353,7 @@ MapMartiniHeightNode.geometry = new MapNodeGeometry(1, 1, 1, 1);
 MapMartiniHeightNode.tileSize = 256;
 
 class MapView extends Mesh {
-    constructor(root = MapView.PLANAR, provider = new OpenStreetMapsProvider(), heightProvider = null) {
+    constructor(root = MapView.PLANAR, provider = new OpenStreetMapsProvider(), heightProvider = null, lod = new LODRaycast()) {
         super(undefined, new MeshBasicMaterial({ transparent: true, opacity: 0.0, depthWrite: false, colorWrite: false }));
         this.lod = null;
         this.provider = null;
@@ -1403,7 +1363,7 @@ class MapView extends Mesh {
         this.onBeforeRender = (renderer, scene, camera, geometry, material, group) => {
             this.lod.updateLOD(this, camera, renderer, scene);
         };
-        this.lod = new LODRaycast();
+        this.lod = lod;
         this.provider = provider;
         this.heightProvider = heightProvider;
         this.setRoot(root);
@@ -1500,20 +1460,49 @@ MapView.mapModes = new Map([
     [MapView.MARTINI, MapMartiniHeightNode]
 ]);
 
-const pov$1 = new Vector3();
-const position$1 = new Vector3();
+const pov$2 = new Vector3();
+const position$2 = new Vector3();
 class LODRadial {
     constructor(subdivideDistance = 50, simplifyDistance = 300) {
         this.subdivideDistance = subdivideDistance;
         this.simplifyDistance = simplifyDistance;
     }
     updateLOD(view, camera, renderer, scene) {
+        camera.getWorldPosition(pov$2);
+        view.children[0].traverse((node) => {
+            node.getWorldPosition(position$2);
+            let distance = pov$2.distanceTo(position$2);
+            distance /= Math.pow(2, view.provider.maxZoom - node.level);
+            if (distance < this.subdivideDistance) {
+                node.subdivide();
+            }
+            else if (distance > this.simplifyDistance && node.parentNode) {
+                node.parentNode.simplify();
+            }
+        });
+    }
+}
+
+const projection$1 = new Matrix4();
+const pov$1 = new Vector3();
+const frustum$1 = new Frustum();
+const position$1 = new Vector3();
+class LODFrustum extends LODRadial {
+    constructor(subdivideDistance = 120, simplifyDistance = 400) {
+        super(subdivideDistance, simplifyDistance);
+        this.testCenter = true;
+        this.pointOnly = false;
+    }
+    updateLOD(view, camera, renderer, scene) {
+        projection$1.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+        frustum$1.setFromProjectionMatrix(projection$1);
         camera.getWorldPosition(pov$1);
         view.children[0].traverse((node) => {
             node.getWorldPosition(position$1);
             let distance = pov$1.distanceTo(position$1);
             distance /= Math.pow(2, view.provider.maxZoom - node.level);
-            if (distance < this.subdivideDistance) {
+            const inFrustum = this.pointOnly ? frustum$1.containsPoint(position$1) : frustum$1.intersectsObject(node);
+            if (distance < this.subdivideDistance && inFrustum) {
                 node.subdivide();
             }
             else if (distance > this.simplifyDistance && node.parentNode) {
@@ -1527,26 +1516,48 @@ const projection = new Matrix4();
 const pov = new Vector3();
 const frustum = new Frustum();
 const position = new Vector3();
-class LODFrustum extends LODRadial {
-    constructor(subdivideDistance = 120, simplifyDistance = 400) {
-        super(subdivideDistance, simplifyDistance);
-        this.testCenter = true;
-        this.pointOnly = false;
-    }
+const zoomLevelPixelRatios = [
+    78271.484, 39135.742, 19567.871, 9783.936, 4891.968, 2445.984, 1222.992,
+    611.496, 305.748, 152.874, 76.437, 38.218, 19.109, 9.555, 4.777, 2.389, 1.194,
+    0.597, 0.299, 0.149, 0.075, 0.037, 0.019
+];
+class LODFrustumOrthographic extends LODFrustum {
     updateLOD(view, camera, renderer, scene) {
+        const isOrthographic = camera.isOrthographicCamera;
+        if (!isOrthographic) {
+            super.updateLOD(view, camera, renderer, scene);
+            return;
+        }
         projection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
         frustum.setFromProjectionMatrix(projection);
         camera.getWorldPosition(pov);
-        view.children[0].traverse((node) => {
+        view.children[0].traverse((obj) => {
+            var _a;
+            const node = obj;
             node.getWorldPosition(position);
-            let distance = pov.distanceTo(position);
-            distance /= Math.pow(2, view.provider.maxZoom - node.level);
-            const inFrustum = this.pointOnly ? frustum.containsPoint(position) : frustum.intersectsObject(node);
-            if (distance < this.subdivideDistance && inFrustum) {
-                node.subdivide();
-            }
-            else if (distance > this.simplifyDistance && node.parentNode) {
-                node.parentNode.simplify();
+            const nodeBox = new Box3().setFromObject(node);
+            let distance = nodeBox.distanceToPoint(pov);
+            distance /= Math.pow(2, (view.provider.maxZoom - node.level));
+            const inFrustum = frustum.intersectsObject(node);
+            if (inFrustum) {
+                const metresPerPixel = 1 / camera.zoom;
+                let closestZoomLevel = 0;
+                let minDifference = Number.POSITIVE_INFINITY;
+                for (let i = 0; i < zoomLevelPixelRatios.length; i++) {
+                    const difference = Math.abs(zoomLevelPixelRatios[i] - metresPerPixel);
+                    if (difference < minDifference) {
+                        minDifference = difference;
+                        closestZoomLevel = i;
+                    }
+                }
+                if (node.level < closestZoomLevel) {
+                    if (!(node.children.length > 0)) {
+                        node.subdivide();
+                    }
+                }
+                else if (node.level > closestZoomLevel) {
+                    (_a = node.parentNode) === null || _a === void 0 ? void 0 : _a.simplify();
+                }
             }
         });
     }
@@ -1999,4 +2010,4 @@ class CancelablePromise {
     }
 }
 
-export { BingMapsProvider, CancelablePromise, CanvasUtils, DebugProvider, Geolocation, GeolocationUtils, GoogleMapsProvider, HeightDebugProvider, HereMapsProvider, LODFrustum, LODRadial, LODRaycast, MapBoxProvider, MapHeightNode, MapHeightNodeShader, MapNode, MapNodeGeometry, MapNodeHeightGeometry, MapPlaneNode, MapProvider, MapSphereNode, MapSphereNodeGeometry, MapTilerProvider, MapView, OpenMapTilesProvider, OpenStreetMapsProvider, QuadTreePosition, TextureUtils, UnitsUtils, XHRUtils };
+export { BingMapsProvider, CancelablePromise, CanvasUtils, DebugProvider, Geolocation, GeolocationUtils, GoogleMapsProvider, HeightDebugProvider, HereMapsProvider, LODFrustum, LODFrustumOrthographic, LODRadial, LODRaycast, MapBoxProvider, MapHeightNode, MapHeightNodeShader, MapNode, MapNodeGeometry, MapNodeHeightGeometry, MapPlaneNode, MapProvider, MapSphereNode, MapSphereNodeGeometry, MapTilerProvider, MapView, OpenMapTilesProvider, OpenStreetMapsProvider, QuadTreePosition, TextureUtils, UnitsUtils, XHRUtils };
