@@ -4,6 +4,7 @@ export {LODControl} from './lod/LODControl';
 export {LODRadial} from './lod/LODRadial';
 export {LODFrustum} from './lod/LODFrustum';
 export {LODRaycast} from './lod/LODRaycast';
+export {LODRaycastSpherical} from './lod/LODRaycastSpherical';
 export {LODFrustumOrthographic} from './lod/LODFrustumOrthographic';
 
 export {BingMapsProvider} from './providers/BingMapsProvider';

@@ -30611,376 +30611,6 @@
 
 	}
 
-	const Cache = {
-
-		enabled: false,
-
-		files: {},
-
-		add: function ( key, file ) {
-
-			if ( this.enabled === false ) return;
-
-			// console.log( 'THREE.Cache', 'Adding key:', key );
-
-			this.files[ key ] = file;
-
-		},
-
-		get: function ( key ) {
-
-			if ( this.enabled === false ) return;
-
-			// console.log( 'THREE.Cache', 'Checking key:', key );
-
-			return this.files[ key ];
-
-		},
-
-		remove: function ( key ) {
-
-			delete this.files[ key ];
-
-		},
-
-		clear: function () {
-
-			this.files = {};
-
-		}
-
-	};
-
-	class LoadingManager {
-
-		constructor( onLoad, onProgress, onError ) {
-
-			const scope = this;
-
-			let isLoading = false;
-			let itemsLoaded = 0;
-			let itemsTotal = 0;
-			let urlModifier = undefined;
-			const handlers = [];
-
-			// Refer to #5689 for the reason why we don't set .onStart
-			// in the constructor
-
-			this.onStart = undefined;
-			this.onLoad = onLoad;
-			this.onProgress = onProgress;
-			this.onError = onError;
-
-			this.itemStart = function ( url ) {
-
-				itemsTotal ++;
-
-				if ( isLoading === false ) {
-
-					if ( scope.onStart !== undefined ) {
-
-						scope.onStart( url, itemsLoaded, itemsTotal );
-
-					}
-
-				}
-
-				isLoading = true;
-
-			};
-
-			this.itemEnd = function ( url ) {
-
-				itemsLoaded ++;
-
-				if ( scope.onProgress !== undefined ) {
-
-					scope.onProgress( url, itemsLoaded, itemsTotal );
-
-				}
-
-				if ( itemsLoaded === itemsTotal ) {
-
-					isLoading = false;
-
-					if ( scope.onLoad !== undefined ) {
-
-						scope.onLoad();
-
-					}
-
-				}
-
-			};
-
-			this.itemError = function ( url ) {
-
-				if ( scope.onError !== undefined ) {
-
-					scope.onError( url );
-
-				}
-
-			};
-
-			this.resolveURL = function ( url ) {
-
-				if ( urlModifier ) {
-
-					return urlModifier( url );
-
-				}
-
-				return url;
-
-			};
-
-			this.setURLModifier = function ( transform ) {
-
-				urlModifier = transform;
-
-				return this;
-
-			};
-
-			this.addHandler = function ( regex, loader ) {
-
-				handlers.push( regex, loader );
-
-				return this;
-
-			};
-
-			this.removeHandler = function ( regex ) {
-
-				const index = handlers.indexOf( regex );
-
-				if ( index !== - 1 ) {
-
-					handlers.splice( index, 2 );
-
-				}
-
-				return this;
-
-			};
-
-			this.getHandler = function ( file ) {
-
-				for ( let i = 0, l = handlers.length; i < l; i += 2 ) {
-
-					const regex = handlers[ i ];
-					const loader = handlers[ i + 1 ];
-
-					if ( regex.global ) regex.lastIndex = 0; // see #17920
-
-					if ( regex.test( file ) ) {
-
-						return loader;
-
-					}
-
-				}
-
-				return null;
-
-			};
-
-		}
-
-	}
-
-	const DefaultLoadingManager = /*@__PURE__*/ new LoadingManager();
-
-	class Loader {
-
-		constructor( manager ) {
-
-			this.manager = ( manager !== undefined ) ? manager : DefaultLoadingManager;
-
-			this.crossOrigin = 'anonymous';
-			this.withCredentials = false;
-			this.path = '';
-			this.resourcePath = '';
-			this.requestHeader = {};
-
-		}
-
-		load( /* url, onLoad, onProgress, onError */ ) {}
-
-		loadAsync( url, onProgress ) {
-
-			const scope = this;
-
-			return new Promise( function ( resolve, reject ) {
-
-				scope.load( url, resolve, onProgress, reject );
-
-			} );
-
-		}
-
-		parse( /* data */ ) {}
-
-		setCrossOrigin( crossOrigin ) {
-
-			this.crossOrigin = crossOrigin;
-			return this;
-
-		}
-
-		setWithCredentials( value ) {
-
-			this.withCredentials = value;
-			return this;
-
-		}
-
-		setPath( path ) {
-
-			this.path = path;
-			return this;
-
-		}
-
-		setResourcePath( resourcePath ) {
-
-			this.resourcePath = resourcePath;
-			return this;
-
-		}
-
-		setRequestHeader( requestHeader ) {
-
-			this.requestHeader = requestHeader;
-			return this;
-
-		}
-
-	}
-
-	Loader.DEFAULT_MATERIAL_NAME = '__DEFAULT';
-
-	class ImageLoader extends Loader {
-
-		constructor( manager ) {
-
-			super( manager );
-
-		}
-
-		load( url, onLoad, onProgress, onError ) {
-
-			if ( this.path !== undefined ) url = this.path + url;
-
-			url = this.manager.resolveURL( url );
-
-			const scope = this;
-
-			const cached = Cache.get( url );
-
-			if ( cached !== undefined ) {
-
-				scope.manager.itemStart( url );
-
-				setTimeout( function () {
-
-					if ( onLoad ) onLoad( cached );
-
-					scope.manager.itemEnd( url );
-
-				}, 0 );
-
-				return cached;
-
-			}
-
-			const image = createElementNS( 'img' );
-
-			function onImageLoad() {
-
-				removeEventListeners();
-
-				Cache.add( url, this );
-
-				if ( onLoad ) onLoad( this );
-
-				scope.manager.itemEnd( url );
-
-			}
-
-			function onImageError( event ) {
-
-				removeEventListeners();
-
-				if ( onError ) onError( event );
-
-				scope.manager.itemError( url );
-				scope.manager.itemEnd( url );
-
-			}
-
-			function removeEventListeners() {
-
-				image.removeEventListener( 'load', onImageLoad, false );
-				image.removeEventListener( 'error', onImageError, false );
-
-			}
-
-			image.addEventListener( 'load', onImageLoad, false );
-			image.addEventListener( 'error', onImageError, false );
-
-			if ( url.slice( 0, 5 ) !== 'data:' ) {
-
-				if ( this.crossOrigin !== undefined ) image.crossOrigin = this.crossOrigin;
-
-			}
-
-			scope.manager.itemStart( url );
-
-			image.src = url;
-
-			return image;
-
-		}
-
-	}
-
-	class TextureLoader extends Loader {
-
-		constructor( manager ) {
-
-			super( manager );
-
-		}
-
-		load( url, onLoad, onProgress, onError ) {
-
-			const texture = new Texture();
-
-			const loader = new ImageLoader( this.manager );
-			loader.setCrossOrigin( this.crossOrigin );
-			loader.setPath( this.path );
-
-			loader.load( url, function ( image ) {
-
-				texture.image = image;
-				texture.needsUpdate = true;
-
-				if ( onLoad !== undefined ) {
-
-					onLoad( texture );
-
-				}
-
-			}, onProgress, onError );
-
-			return texture;
-
-		}
-
-	}
-
 	class Light extends Object3D {
 
 		constructor( color, intensity = 1 ) {
@@ -33800,9 +33430,12 @@
 	MapHeightNode.baseScale = new Vector3(UnitsUtils.EARTH_PERIMETER, 1, UnitsUtils.EARTH_PERIMETER);
 
 	class MapSphereNodeGeometry extends BufferGeometry {
-	    constructor(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength) {
+	    constructor(radius, widthSegments, heightSegments, zoom, tileX, tileY) {
 	        super();
-	        const thetaEnd = thetaStart + thetaLength;
+	        const bounds = UnitsUtils.tileBounds(zoom, tileX, tileY);
+	        const tileRange = Math.pow(2, zoom);
+	        const isTopTile = tileY === 0;
+	        const isBottomTile = tileY === tileRange - 1;
 	        let index = 0;
 	        const grid = [];
 	        const vertex = new Vector3();
@@ -33814,13 +33447,30 @@
 	        for (let iy = 0; iy <= heightSegments; iy++) {
 	            const verticesRow = [];
 	            const v = iy / heightSegments;
+	            const mercatorY = bounds[2] + (1 - v) * bounds[3];
+	            let latitude;
+	            if (isTopTile && iy === 0) {
+	                latitude = Math.PI / 2;
+	            }
+	            else if (isBottomTile && iy === heightSegments) {
+	                latitude = -Math.PI / 2;
+	            }
+	            else {
+	                latitude = Math.atan(Math.sinh(mercatorY / MapSphereNodeGeometry.WEB_MERCATOR_RADIUS));
+	            }
+	            const sinLat = Math.sin(latitude);
+	            const cosLat = Math.cos(latitude);
 	            for (let ix = 0; ix <= widthSegments; ix++) {
 	                const u = ix / widthSegments;
-	                vertex.x = -radius * Math.cos(phiStart + u * phiLength) * Math.sin(thetaStart + v * thetaLength);
-	                vertex.y = radius * Math.cos(thetaStart + v * thetaLength);
-	                vertex.z = radius * Math.sin(phiStart + u * phiLength) * Math.sin(thetaStart + v * thetaLength);
+	                const mercatorX = bounds[0] + u * bounds[1];
+	                const longitude = mercatorX / MapSphereNodeGeometry.WEB_MERCATOR_RADIUS;
+	                const sinLon = Math.sin(longitude);
+	                const cosLon = Math.cos(longitude);
+	                vertex.x = radius * cosLon * cosLat;
+	                vertex.y = radius * sinLat;
+	                vertex.z = -radius * sinLon * cosLat;
 	                vertices.push(vertex.x, vertex.y, vertex.z);
-	                normal.set(vertex.x, vertex.y, vertex.z).normalize();
+	                normal.set(cosLon * cosLat, sinLat, -sinLon * cosLat).normalize();
 	                normals.push(normal.x, normal.y, normal.z);
 	                uvs.push(u, 1 - v);
 	                verticesRow.push(index++);
@@ -33833,10 +33483,10 @@
 	                const b = grid[iy][ix];
 	                const c = grid[iy + 1][ix];
 	                const d = grid[iy + 1][ix + 1];
-	                if (iy !== 0 || thetaStart > 0) {
+	                if (!(isTopTile && iy === 0)) {
 	                    indices.push(a, b, d);
 	                }
-	                if (iy !== heightSegments - 1 || thetaEnd < Math.PI) {
+	                if (!(isBottomTile && iy === heightSegments - 1)) {
 	                    indices.push(b, c, d);
 	                }
 	            }
@@ -33847,50 +33497,11 @@
 	        this.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
 	    }
 	}
+	MapSphereNodeGeometry.WEB_MERCATOR_RADIUS = UnitsUtils.WEB_MERCATOR_MAX_EXTENT / Math.PI;
 
 	class MapSphereNode extends MapNode {
 	    constructor(parentNode = null, mapView = null, location = QuadTreePosition.root, level = 0, x = 0, y = 0) {
-	        let bounds = UnitsUtils.tileBounds(level, x, y);
-	        const vertexShader = `
-		varying vec3 vPosition;
-
-		void main() {
-			vPosition = position;
-			gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-		}
-		`;
-	        const fragmentShader = `
-		#define PI 3.1415926538
-		varying vec3 vPosition;
-		uniform sampler2D uTexture;
-		uniform vec4 webMercatorBounds;
-
-		void main() {
-			// this could also be a constant, but for some reason using a constant causes more visible tile gaps at high zoom
-			float radius = length(vPosition);
-
-			float latitude = asin(vPosition.y / radius);
-			float longitude = atan(-vPosition.z, vPosition.x);
-
-			float web_mercator_x = radius * longitude;
-			float web_mercator_y = radius * log(tan(PI / 4.0 + latitude / 2.0));
-			float y = (web_mercator_y - webMercatorBounds.z) / webMercatorBounds.w;
-			float x = (web_mercator_x - webMercatorBounds.x) / webMercatorBounds.y;
-
-			vec4 color = texture2D(uTexture, vec2(x, y));
-			gl_FragColor = color;
-			${parseInt(REVISION) < 152 ? '' : `
-				#include <tonemapping_fragment>
-				#include ${parseInt(REVISION) >= 154 ? '<colorspace_fragment>' : '<encodings_fragment>'}
-				`}
-		}
-		`;
-	        let vBounds = new Vector4(...bounds);
-	        const material = new ShaderMaterial({
-	            uniforms: { uTexture: { value: new Texture() }, webMercatorBounds: { value: vBounds } },
-	            vertexShader: vertexShader,
-	            fragmentShader: fragmentShader
-	        });
+	        const material = new MeshBasicMaterial({ wireframe: false });
 	        super(parentNode, mapView, location, level, x, y, MapSphereNode.createGeometry(level, x, y), material);
 	        this.applyScaleNode();
 	        this.matrixAutoUpdate = false;
@@ -33908,30 +33519,9 @@
 	        });
 	    }
 	    static createGeometry(zoom, x, y) {
-	        const range = Math.pow(2, zoom);
 	        const max = 40;
-	        const segments = Math.floor(MapSphereNode.segments * (max / (zoom + 1)) / max);
-	        const lon1 = x > 0 ? UnitsUtils.webMercatorToLongitude(zoom, x) + Math.PI : 0;
-	        const lon2 = x < range - 1 ? UnitsUtils.webMercatorToLongitude(zoom, x + 1) + Math.PI : 2 * Math.PI;
-	        const phiStart = lon1;
-	        const phiLength = lon2 - lon1;
-	        const lat1 = y > 0 ? UnitsUtils.webMercatorToLatitude(zoom, y) : Math.PI / 2;
-	        const lat2 = y < range - 1 ? UnitsUtils.webMercatorToLatitude(zoom, y + 1) : -Math.PI / 2;
-	        const thetaLength = lat1 - lat2;
-	        const thetaStart = Math.PI - (lat1 + Math.PI / 2);
-	        return new MapSphereNodeGeometry(1, segments, segments, phiStart, phiLength, thetaStart, thetaLength);
-	    }
-	    applyTexture(image) {
-	        return __awaiter(this, void 0, void 0, function* () {
-	            const textureLoader = new TextureLoader();
-	            const texture = textureLoader.load(image.src, function () {
-	                if (parseInt(REVISION) >= 152) {
-	                    texture.colorSpace = 'srgb';
-	                }
-	            });
-	            this.material.uniforms.uTexture.value = texture;
-	            this.material.uniforms.uTexture.needsUpdate = true;
-	        });
+	        const segments = Math.max(1, Math.floor(MapSphereNode.segments * (max / (zoom + 1)) / max));
+	        return new MapSphereNodeGeometry(1, segments, segments, zoom, x, y);
 	    }
 	    applyScaleNode() {
 	        this.geometry.computeBoundingBox();
@@ -33974,7 +33564,7 @@
 	        }
 	    }
 	}
-	MapSphereNode.baseGeometry = new MapSphereNodeGeometry(UnitsUtils.EARTH_RADIUS, 64, 64, 0, 2 * Math.PI, 0, Math.PI);
+	MapSphereNode.baseGeometry = new MapSphereNodeGeometry(UnitsUtils.EARTH_RADIUS, 64, 64, 0, 0, 0);
 	MapSphereNode.baseScale = new Vector3(1, 1, 1);
 	MapSphereNode.segments = 80;
 
@@ -34093,6 +33683,7 @@
 	                intersects.push(myIntersects[0]);
 	            }
 	        }
+	        console.log('GeoThree: LODRaycast hits', intersects.length);
 	        for (let i = 0; i < intersects.length; i++) {
 	            const node = intersects[i].object;
 	            let distance = intersects[i].distance;
@@ -34104,6 +33695,7 @@
 	                const vector = new Vector3(matrix[0], matrix[1], matrix[2]);
 	                distance = vector.length() / distance;
 	            }
+	            console.log('GeoThree: LODRaycast hit distance', distance);
 	            if (distance > this.thresholdUp) {
 	                node.subdivide();
 	            }

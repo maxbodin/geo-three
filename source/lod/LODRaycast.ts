@@ -73,6 +73,9 @@ export class LODRaycast implements LODControl
 			}
 		}
 
+		console.log('GeoThree: LODRaycast hits', intersects.length);
+
+
 		for (let i = 0; i < intersects.length; i++) 
 		{
 			const node = intersects[i].object;
@@ -90,6 +93,8 @@ export class LODRaycast implements LODControl
 				const vector = new Vector3(matrix[0], matrix[1], matrix[2]);
 				distance = vector.length() / distance;
 			}
+
+			console.log('GeoThree: LODRaycast hit distance', distance);
 
 			if (distance > this.thresholdUp) 
 			{
