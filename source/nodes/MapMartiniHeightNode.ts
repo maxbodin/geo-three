@@ -1,9 +1,10 @@
-import {BufferGeometry, DoubleSide, Float32BufferAttribute, Material, MeshPhongMaterial, NearestFilter, RGBAFormat, Texture, Uint32BufferAttribute} from 'three';
+import {BufferGeometry, DataTexture, DoubleSide, Float32BufferAttribute, Material, MeshPhongMaterial, NearestFilter, RGBAFormat, Texture, Uint32BufferAttribute, UnsignedByteType} from 'three';
 import {MapNodeGeometry} from '../geometries/MapNodeGeometry';
 import {MapView} from '../MapView';
 import {Martini} from './Martini';
 import {MapHeightNode} from './MapHeightNode';
 import {CanvasUtils} from '../utils/CanvasUtils';
+import {PNGDecoder} from '../utils/PNGDecoder';
 import {QuadTreePosition} from './MapNode';
 
 /** 
@@ -281,6 +282,46 @@ export class MapMartiniHeightNode extends MapHeightNode
 	}	
 
 	/**
+	 * Process height data from raw RGBA image data.
+	 *
+	 * This is the preferred path when tile data is loaded via fetchTileBuffer(), as it
+	 * avoids canvas.getImageData() which is subject to fingerprinting noise in Firefox.
+	 *
+	 * @param imageData - Decoded RGBA pixel data from the tile.
+	 */
+	public async processImageData(imageData: ImageData): Promise<void>
+	{
+		const tileSize = imageData.width;
+		const gridSize = tileSize + 1;
+		const data = imageData.data;
+
+		const terrain = MapMartiniHeightNode.getTerrain(data, tileSize, this.elevationDecoder);
+		const martini = new Martini(gridSize);
+		const tile = martini.createTile(terrain);
+		const {vertices, triangles} = tile.getMesh(typeof this.meshMaxError === 'function' ? this.meshMaxError(this.level) : this.meshMaxError);
+
+		const attributes = MapMartiniHeightNode.getMeshAttributes(vertices, terrain, tileSize, [-0.5, -0.5, 0.5, 0.5], this.exageration);
+
+		this.geometry = new BufferGeometry();
+		this.geometry.setIndex(new Uint32BufferAttribute(triangles, 1));
+		this.geometry.setAttribute('position', new Float32BufferAttribute(attributes.position.value, attributes.position.size));
+		this.geometry.setAttribute('uv', new Float32BufferAttribute(attributes.uv.value, attributes.uv.size));
+		this.geometry.rotateX(Math.PI);
+
+		const texture = new DataTexture(imageData.data, tileSize, tileSize, RGBAFormat, UnsignedByteType);
+		texture.generateMipmaps = false;
+		texture.magFilter = NearestFilter;
+		texture.minFilter = NearestFilter;
+		texture.needsUpdate = true;
+
+		this.material.userData.heightMap.value = texture;
+		// @ts-ignore
+		this.material.map = texture;
+		// @ts-ignore
+		this.material.needsUpdate = true;
+	}
+
+	/**
 	 * Process the height texture received from the tile data provider.
 	 * 
 	 * @param image - Image element received by the tile provider.
@@ -335,14 +376,31 @@ export class MapMartiniHeightNode extends MapHeightNode
 			throw new Error('GeoThree: MapView.heightProvider provider is null.');
 		}
 
-		const image = await this.mapView.heightProvider.fetchTile(this.level, this.x, this.y);
-
-		if (this.disposed) 
+		const tileBuffer = await this.mapView.heightProvider.fetchTileBuffer(this.level, this.x, this.y);
+		if (tileBuffer !== null)
 		{
-			return;
-		}
+			// Decode PNG from raw bytes, bypassing canvas to avoid Firefox fingerprinting noise
+			const imageData = await PNGDecoder.decode(tileBuffer);
 
-		this.processHeight(image);
+			if (this.disposed)
+			{
+				return;
+			}
+
+			await this.processImageData(imageData);
+		}
+		else
+		{
+			// Fallback: load image via HTML element and use canvas for pixel read
+			const image = await this.mapView.heightProvider.fetchTile(this.level, this.x, this.y);
+
+			if (this.disposed) 
+			{
+				return;
+			}
+
+			await this.processHeight(image);
+		}
 
 		this.heightLoaded = true;
 		this.nodeReady();

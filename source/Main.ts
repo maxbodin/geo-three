@@ -34,3 +34,4 @@ export {GeolocationUtils} from './utils/GeolocationUtils';
 export {CancelablePromise} from './utils/CancelablePromise';
 export {XHRUtils} from './utils/XHRUtils';
 export {TextureUtils} from './utils/TextureUtils';
+export {PNGDecoder} from './utils/PNGDecoder';

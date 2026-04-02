@@ -1,4 +1,4 @@
-import {BufferGeometry, Intersection, LinearFilter, Material, MeshPhongMaterial, NearestFilter, Raycaster, RGBAFormat, Texture, Vector3} from 'three';
+import {BufferGeometry, DataTexture, Intersection, LinearFilter, Material, MeshPhongMaterial, NearestFilter, Raycaster, RGBAFormat, Texture, UnsignedByteType, Vector3} from 'three';
 import {MapHeightNode} from './MapHeightNode';
 import {MapNodeGeometry} from '../geometries/MapNodeGeometry';
 import {MapPlaneNode} from './MapPlaneNode';
@@ -6,6 +6,7 @@ import {UnitsUtils} from '../utils/UnitsUtils';
 import {MapNode, QuadTreePosition} from './MapNode';
 import {MapView} from '../MapView';
 import {TextureUtils} from '../utils/TextureUtils';
+import {PNGDecoder} from '../utils/PNGDecoder';
 
 /**
  * Map height node that uses GPU height calculation to generate the deformed plane mesh.
@@ -125,14 +126,39 @@ export class MapHeightNodeShader extends MapHeightNode
 
 		try 
 		{
-			const image = await this.mapView.heightProvider.fetchTile(this.level, this.x, this.y);
+			let texture: Texture | DataTexture;
+
+			const tileBuffer = await this.mapView.heightProvider.fetchTileBuffer(this.level, this.x, this.y);
+			if (tileBuffer !== null)
+			{
+				// Decode PNG from raw bytes, bypassing canvas to avoid Firefox fingerprinting noise
+				const decoded = await PNGDecoder.decode(tileBuffer);
+
+				if (this.disposed)
+				{
+					return;
+				}
+
+				texture = new DataTexture(decoded.data, decoded.width, decoded.height, RGBAFormat, UnsignedByteType);
+			}
+			else
+			{
+				// Fallback: load image via HTML element
+				const image = await this.mapView.heightProvider.fetchTile(this.level, this.x, this.y);
+
+				if (this.disposed)
+				{
+					return;
+				}
+
+				texture = new Texture(image as any);
+			}
 
 			if (this.disposed) 
 			{
 				return;
 			}
 			
-			const texture = new Texture(image as any);
 			texture.generateMipmaps = false;
 			texture.format = RGBAFormat;
 			texture.magFilter = NearestFilter;
