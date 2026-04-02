@@ -1,4 +1,4 @@
-import { Texture, RGBAFormat, LinearFilter, Mesh, REVISION, BufferGeometry, Float32BufferAttribute, Vector2, Vector3, MeshBasicMaterial, MeshPhongMaterial, Vector4, ShaderMaterial, Matrix4, Quaternion, TextureLoader, NearestFilter, Raycaster, DoubleSide, Uint32BufferAttribute, Frustum, Color } from 'three';
+import { Texture, RGBAFormat, LinearFilter, Mesh, REVISION, BufferGeometry, Float32BufferAttribute, Vector2, Vector3, MeshBasicMaterial, MeshPhongMaterial, Vector4, ShaderMaterial, Matrix4, Quaternion, TextureLoader, NearestFilter, Raycaster, DoubleSide, Uint32BufferAttribute, Frustum, Box3, Color } from 'three';
 
 /*! *****************************************************************************
 Copyright (c) Microsoft Corporation.
@@ -850,7 +850,7 @@ class MapHeightNodeShader extends MapHeightNode {
 			#include <fog_vertex>
 	
 			// Calculate height of the title
-			vec4 _theight = texture2D(heightMap, vUv);
+			vec4 _theight = texture2D(heightMap, vMapUv);
 			float _height = ((_theight.r * 255.0 * 65536.0 + _theight.g * 255.0 * 256.0 + _theight.b * 255.0) * 0.1) - 10000.0;
 			vec3 _transformed = position + _height * normal;
 	
@@ -1393,7 +1393,7 @@ MapMartiniHeightNode.geometry = new MapNodeGeometry(1, 1, 1, 1);
 MapMartiniHeightNode.tileSize = 256;
 
 class MapView extends Mesh {
-    constructor(root = MapView.PLANAR, provider = new OpenStreetMapsProvider(), heightProvider = null) {
+    constructor(root = MapView.PLANAR, provider = new OpenStreetMapsProvider(), heightProvider = null, lod = new LODRaycast()) {
         super(undefined, new MeshBasicMaterial({ transparent: true, opacity: 0.0, depthWrite: false, colorWrite: false }));
         this.lod = null;
         this.provider = null;
@@ -1403,7 +1403,7 @@ class MapView extends Mesh {
         this.onBeforeRender = (renderer, scene, camera, geometry, material, group) => {
             this.lod.updateLOD(this, camera, renderer, scene);
         };
-        this.lod = new LODRaycast();
+        this.lod = lod;
         this.provider = provider;
         this.heightProvider = heightProvider;
         this.setRoot(root);
@@ -1500,20 +1500,49 @@ MapView.mapModes = new Map([
     [MapView.MARTINI, MapMartiniHeightNode]
 ]);
 
-const pov$1 = new Vector3();
-const position$1 = new Vector3();
+const pov$2 = new Vector3();
+const position$2 = new Vector3();
 class LODRadial {
     constructor(subdivideDistance = 50, simplifyDistance = 300) {
         this.subdivideDistance = subdivideDistance;
         this.simplifyDistance = simplifyDistance;
     }
     updateLOD(view, camera, renderer, scene) {
+        camera.getWorldPosition(pov$2);
+        view.children[0].traverse((node) => {
+            node.getWorldPosition(position$2);
+            let distance = pov$2.distanceTo(position$2);
+            distance /= Math.pow(2, view.provider.maxZoom - node.level);
+            if (distance < this.subdivideDistance) {
+                node.subdivide();
+            }
+            else if (distance > this.simplifyDistance && node.parentNode) {
+                node.parentNode.simplify();
+            }
+        });
+    }
+}
+
+const projection$1 = new Matrix4();
+const pov$1 = new Vector3();
+const frustum$1 = new Frustum();
+const position$1 = new Vector3();
+class LODFrustum extends LODRadial {
+    constructor(subdivideDistance = 120, simplifyDistance = 400) {
+        super(subdivideDistance, simplifyDistance);
+        this.testCenter = true;
+        this.pointOnly = false;
+    }
+    updateLOD(view, camera, renderer, scene) {
+        projection$1.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+        frustum$1.setFromProjectionMatrix(projection$1);
         camera.getWorldPosition(pov$1);
         view.children[0].traverse((node) => {
             node.getWorldPosition(position$1);
             let distance = pov$1.distanceTo(position$1);
             distance /= Math.pow(2, view.provider.maxZoom - node.level);
-            if (distance < this.subdivideDistance) {
+            const inFrustum = this.pointOnly ? frustum$1.containsPoint(position$1) : frustum$1.intersectsObject(node);
+            if (distance < this.subdivideDistance && inFrustum) {
                 node.subdivide();
             }
             else if (distance > this.simplifyDistance && node.parentNode) {
@@ -1527,26 +1556,48 @@ const projection = new Matrix4();
 const pov = new Vector3();
 const frustum = new Frustum();
 const position = new Vector3();
-class LODFrustum extends LODRadial {
-    constructor(subdivideDistance = 120, simplifyDistance = 400) {
-        super(subdivideDistance, simplifyDistance);
-        this.testCenter = true;
-        this.pointOnly = false;
-    }
+const zoomLevelPixelRatios = [
+    78271.484, 39135.742, 19567.871, 9783.936, 4891.968, 2445.984, 1222.992,
+    611.496, 305.748, 152.874, 76.437, 38.218, 19.109, 9.555, 4.777, 2.389, 1.194,
+    0.597, 0.299, 0.149, 0.075, 0.037, 0.019
+];
+class LODFrustumOrthographic extends LODFrustum {
     updateLOD(view, camera, renderer, scene) {
+        const isOrthographic = camera.isOrthographicCamera;
+        if (!isOrthographic) {
+            super.updateLOD(view, camera, renderer, scene);
+            return;
+        }
         projection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
         frustum.setFromProjectionMatrix(projection);
         camera.getWorldPosition(pov);
-        view.children[0].traverse((node) => {
+        view.children[0].traverse((obj) => {
+            var _a;
+            const node = obj;
             node.getWorldPosition(position);
-            let distance = pov.distanceTo(position);
-            distance /= Math.pow(2, view.provider.maxZoom - node.level);
-            const inFrustum = this.pointOnly ? frustum.containsPoint(position) : frustum.intersectsObject(node);
-            if (distance < this.subdivideDistance && inFrustum) {
-                node.subdivide();
-            }
-            else if (distance > this.simplifyDistance && node.parentNode) {
-                node.parentNode.simplify();
+            const nodeBox = new Box3().setFromObject(node);
+            let distance = nodeBox.distanceToPoint(pov);
+            distance /= Math.pow(2, (view.provider.maxZoom - node.level));
+            const inFrustum = frustum.intersectsObject(node);
+            if (inFrustum) {
+                const metresPerPixel = 1 / camera.zoom;
+                let closestZoomLevel = 0;
+                let minDifference = Number.POSITIVE_INFINITY;
+                for (let i = 0; i < zoomLevelPixelRatios.length; i++) {
+                    const difference = Math.abs(zoomLevelPixelRatios[i] - metresPerPixel);
+                    if (difference < minDifference) {
+                        minDifference = difference;
+                        closestZoomLevel = i;
+                    }
+                }
+                if (node.level < closestZoomLevel) {
+                    if (!(node.children.length > 0)) {
+                        node.subdivide();
+                    }
+                }
+                else if (node.level > closestZoomLevel) {
+                    (_a = node.parentNode) === null || _a === void 0 ? void 0 : _a.simplify();
+                }
             }
         });
     }
@@ -1999,4 +2050,4 @@ class CancelablePromise {
     }
 }
 
-export { BingMapsProvider, CancelablePromise, CanvasUtils, DebugProvider, Geolocation, GeolocationUtils, GoogleMapsProvider, HeightDebugProvider, HereMapsProvider, LODFrustum, LODRadial, LODRaycast, MapBoxProvider, MapHeightNode, MapHeightNodeShader, MapNode, MapNodeGeometry, MapNodeHeightGeometry, MapPlaneNode, MapProvider, MapSphereNode, MapSphereNodeGeometry, MapTilerProvider, MapView, OpenMapTilesProvider, OpenStreetMapsProvider, QuadTreePosition, TextureUtils, UnitsUtils, XHRUtils };
+export { BingMapsProvider, CancelablePromise, CanvasUtils, DebugProvider, Geolocation, GeolocationUtils, GoogleMapsProvider, HeightDebugProvider, HereMapsProvider, LODFrustum, LODFrustumOrthographic, LODRadial, LODRaycast, MapBoxProvider, MapHeightNode, MapHeightNodeShader, MapNode, MapNodeGeometry, MapNodeHeightGeometry, MapPlaneNode, MapProvider, MapSphereNode, MapSphereNodeGeometry, MapTilerProvider, MapView, OpenMapTilesProvider, OpenStreetMapsProvider, QuadTreePosition, TextureUtils, UnitsUtils, XHRUtils };
