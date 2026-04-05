@@ -553,176 +553,6 @@ class MapNodeHeightGeometry extends three.BufferGeometry {
     }
 }
 
-class PNGDecoder {
-    static decode(buffer) {
-        return __awaiter(this, void 0, void 0, function* () {
-            const view = new DataView(buffer);
-            const bytes = new Uint8Array(buffer);
-            for (let i = 0; i < 8; i++) {
-                if (bytes[i] !== PNGDecoder.SIGNATURE[i]) {
-                    throw new Error('PNGDecoder: Invalid PNG signature.');
-                }
-            }
-            let width = 0;
-            let height = 0;
-            let bitDepth = 0;
-            let colorType = 0;
-            const idatChunks = [];
-            let offset = 8;
-            while (offset < buffer.byteLength) {
-                const length = view.getUint32(offset);
-                const type = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
-                if (type === 'IHDR') {
-                    width = view.getUint32(offset + 8);
-                    height = view.getUint32(offset + 12);
-                    bitDepth = bytes[offset + 16];
-                    colorType = bytes[offset + 17];
-                }
-                else if (type === 'IDAT') {
-                    idatChunks.push(new Uint8Array(buffer, offset + 8, length));
-                }
-                else if (type === 'IEND') {
-                    break;
-                }
-                offset += 12 + length;
-            }
-            if (bitDepth !== 8) {
-                throw new Error('PNGDecoder: Only 8-bit PNG images are supported.');
-            }
-            let channels;
-            if (colorType === 2) {
-                channels = 3;
-            }
-            else if (colorType === 6) {
-                channels = 4;
-            }
-            else {
-                throw new Error('PNGDecoder: Only RGB (type 2) and RGBA (type 6) PNG images are supported.');
-            }
-            const totalLength = idatChunks.reduce((sum, chunk) => { return sum + chunk.length; }, 0);
-            const compressedData = new Uint8Array(totalLength);
-            let pos = 0;
-            for (const chunk of idatChunks) {
-                compressedData.set(chunk, pos);
-                pos += chunk.length;
-            }
-            const decompressed = yield PNGDecoder.decompress(compressedData);
-            return PNGDecoder.reconstruct(decompressed, width, height, channels);
-        });
-    }
-    static decompress(data) {
-        return __awaiter(this, void 0, void 0, function* () {
-            const ds = new DecompressionStream('deflate');
-            const writer = ds.writable.getWriter();
-            const reader = ds.readable.getReader();
-            writer.write(data);
-            writer.close();
-            const chunks = [];
-            let done = false;
-            while (!done) {
-                const result = yield reader.read();
-                done = result.done;
-                if (!done) {
-                    chunks.push(result.value);
-                }
-            }
-            const totalLength = chunks.reduce((sum, chunk) => { return sum + chunk.length; }, 0);
-            const result = new Uint8Array(totalLength);
-            let pos = 0;
-            for (const chunk of chunks) {
-                result.set(chunk, pos);
-                pos += chunk.length;
-            }
-            return result;
-        });
-    }
-    static reconstruct(data, width, height, channels) {
-        const bytesPerRow = width * channels;
-        const stride = bytesPerRow + 1;
-        const output = new Uint8ClampedArray(width * height * 4);
-        const prevRow = new Uint8Array(bytesPerRow);
-        const currRow = new Uint8Array(bytesPerRow);
-        for (let y = 0; y < height; y++) {
-            const filterType = data[y * stride];
-            const rowStart = y * stride + 1;
-            for (let x = 0; x < bytesPerRow; x++) {
-                const raw = data[rowStart + x];
-                const a = x >= channels ? currRow[x - channels] : 0;
-                const b = y > 0 ? prevRow[x] : 0;
-                const c = x >= channels && y > 0 ? prevRow[x - channels] : 0;
-                let value;
-                switch (filterType) {
-                    case 0:
-                        value = raw;
-                        break;
-                    case 1:
-                        value = raw + a & 0xFF;
-                        break;
-                    case 2:
-                        value = raw + b & 0xFF;
-                        break;
-                    case 3:
-                        value = raw + Math.floor((a + b) / 2) & 0xFF;
-                        break;
-                    case 4:
-                        value = raw + PNGDecoder.paeth(a, b, c) & 0xFF;
-                        break;
-                    default:
-                        value = raw;
-                        break;
-                }
-                currRow[x] = value;
-            }
-            const dstBase = y * width * 4;
-            for (let x = 0; x < width; x++) {
-                const srcIdx = x * channels;
-                const dstIdx = dstBase + x * 4;
-                output[dstIdx + 0] = currRow[srcIdx + 0];
-                output[dstIdx + 1] = currRow[srcIdx + 1];
-                output[dstIdx + 2] = currRow[srcIdx + 2];
-                output[dstIdx + 3] = channels === 4 ? currRow[srcIdx + 3] : 255;
-            }
-            prevRow.set(currRow);
-        }
-        return new ImageData(output, width, height);
-    }
-    static paeth(a, b, c) {
-        const p = a + b - c;
-        const pa = Math.abs(p - a);
-        const pb = Math.abs(p - b);
-        const pc = Math.abs(p - c);
-        if (pa <= pb && pa <= pc) {
-            return a;
-        }
-        if (pb <= pc) {
-            return b;
-        }
-        return c;
-    }
-    static scaleImageData(src, dstWidth, dstHeight) {
-        const srcData = src.data;
-        const srcWidth = src.width;
-        const srcHeight = src.height;
-        const dst = new Uint8ClampedArray(dstWidth * dstHeight * 4);
-        const xScale = srcWidth / dstWidth;
-        const yScale = srcHeight / dstHeight;
-        for (let y = 0; y < dstHeight; y++) {
-            const srcY = Math.floor(y * yScale);
-            for (let x = 0; x < dstWidth; x++) {
-                const srcX = Math.floor(x * xScale);
-                const srcIdx = (srcY * srcWidth + srcX) * 4;
-                const dstIdx = (y * dstWidth + x) * 4;
-                dst[dstIdx + 0] = srcData[srcIdx + 0];
-                dst[dstIdx + 1] = srcData[srcIdx + 1];
-                dst[dstIdx + 2] = srcData[srcIdx + 2];
-                dst[dstIdx + 3] = srcData[srcIdx + 3];
-            }
-        }
-        return new ImageData(dst, dstWidth, dstHeight);
-    }
-}
-PNGDecoder.SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10];
-
 class MapHeightNode extends MapNode {
     constructor(parentNode = null, mapView = null, location = QuadTreePosition.root, level = 0, x = 0, y = 0, geometry = MapHeightNode.geometry, material = new three.MeshPhongMaterial({ wireframe: false, color: 0xffffff })) {
         super(parentNode, mapView, location, level, x, y, geometry, material);
@@ -768,11 +598,15 @@ class MapHeightNode extends MapNode {
                 let imageData;
                 const tileBuffer = yield this.mapView.heightProvider.fetchTileBuffer(this.level, this.x, this.y);
                 if (tileBuffer !== null) {
-                    const decoded = yield PNGDecoder.decode(tileBuffer);
+                    const bitmap = yield createImageBitmap(new Blob([tileBuffer]));
                     if (this.disposed) {
                         return;
                     }
-                    imageData = PNGDecoder.scaleImageData(decoded, this.geometrySize + 1, this.geometrySize + 1);
+                    const canvas = CanvasUtils.createOffscreenCanvas(this.geometrySize + 1, this.geometrySize + 1);
+                    const context = canvas.getContext('2d');
+                    context.imageSmoothingEnabled = false;
+                    context.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, 0, 0, canvas.width, canvas.height);
+                    imageData = context.getImageData(0, 0, canvas.width, canvas.height);
                 }
                 else {
                     const image = yield this.mapView.heightProvider.fetchTile(this.level, this.x, this.y);
@@ -1073,11 +907,11 @@ class MapHeightNodeShader extends MapHeightNode {
                 let texture;
                 const tileBuffer = yield this.mapView.heightProvider.fetchTileBuffer(this.level, this.x, this.y);
                 if (tileBuffer !== null) {
-                    const decoded = yield PNGDecoder.decode(tileBuffer);
+                    const bitmap = yield createImageBitmap(new Blob([tileBuffer]));
                     if (this.disposed) {
                         return;
                     }
-                    texture = new three.DataTexture(decoded.data, decoded.width, decoded.height, three.RGBAFormat, three.UnsignedByteType);
+                    texture = new three.Texture(bitmap);
                 }
                 else {
                     const image = yield this.mapView.heightProvider.fetchTile(this.level, this.x, this.y);
@@ -1544,31 +1378,6 @@ class MapMartiniHeightNode extends MapHeightNode {
             uv: { value: texCoords, size: 2 }
         };
     }
-    processImageData(imageData) {
-        return __awaiter(this, void 0, void 0, function* () {
-            const tileSize = imageData.width;
-            const gridSize = tileSize + 1;
-            const data = imageData.data;
-            const terrain = MapMartiniHeightNode.getTerrain(data, tileSize, this.elevationDecoder);
-            const martini = new Martini(gridSize);
-            const tile = martini.createTile(terrain);
-            const { vertices, triangles } = tile.getMesh(typeof this.meshMaxError === 'function' ? this.meshMaxError(this.level) : this.meshMaxError);
-            const attributes = MapMartiniHeightNode.getMeshAttributes(vertices, terrain, tileSize, [-0.5, -0.5, 0.5, 0.5], this.exageration);
-            this.geometry = new three.BufferGeometry();
-            this.geometry.setIndex(new three.Uint32BufferAttribute(triangles, 1));
-            this.geometry.setAttribute('position', new three.Float32BufferAttribute(attributes.position.value, attributes.position.size));
-            this.geometry.setAttribute('uv', new three.Float32BufferAttribute(attributes.uv.value, attributes.uv.size));
-            this.geometry.rotateX(Math.PI);
-            const texture = new three.DataTexture(imageData.data, tileSize, tileSize, three.RGBAFormat, three.UnsignedByteType);
-            texture.generateMipmaps = false;
-            texture.magFilter = three.NearestFilter;
-            texture.minFilter = three.NearestFilter;
-            texture.needsUpdate = true;
-            this.material.userData.heightMap.value = texture;
-            this.material.map = texture;
-            this.material.needsUpdate = true;
-        });
-    }
     processHeight(image) {
         return __awaiter(this, void 0, void 0, function* () {
             const tileSize = image.width;
@@ -1607,11 +1416,11 @@ class MapMartiniHeightNode extends MapHeightNode {
             }
             const tileBuffer = yield this.mapView.heightProvider.fetchTileBuffer(this.level, this.x, this.y);
             if (tileBuffer !== null) {
-                const imageData = yield PNGDecoder.decode(tileBuffer);
+                const bitmap = yield createImageBitmap(new Blob([tileBuffer]));
                 if (this.disposed) {
                     return;
                 }
-                yield this.processImageData(imageData);
+                yield this.processHeight(bitmap);
             }
             else {
                 const image = yield this.mapView.heightProvider.fetchTile(this.level, this.x, this.y);
@@ -2327,7 +2136,6 @@ exports.MapTilerProvider = MapTilerProvider;
 exports.MapView = MapView;
 exports.OpenMapTilesProvider = OpenMapTilesProvider;
 exports.OpenStreetMapsProvider = OpenStreetMapsProvider;
-exports.PNGDecoder = PNGDecoder;
 exports.QuadTreePosition = QuadTreePosition;
 exports.TextureUtils = TextureUtils;
 exports.UnitsUtils = UnitsUtils;

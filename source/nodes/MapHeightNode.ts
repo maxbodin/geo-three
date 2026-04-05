@@ -6,7 +6,6 @@ import {UnitsUtils} from '../utils/UnitsUtils';
 import {MapView} from '../MapView';
 import {MapNodeHeightGeometry} from '../geometries/MapNodeHeightGeometry';
 import {CanvasUtils} from '../utils/CanvasUtils';
-import {PNGDecoder} from '../utils/PNGDecoder';
 
 /**
  * Represents a height map tile node that can be subdivided into other height nodes.
@@ -127,15 +126,20 @@ export class MapHeightNode extends MapNode
 			const tileBuffer = await this.mapView.heightProvider.fetchTileBuffer(this.level, this.x, this.y);
 			if (tileBuffer !== null)
 			{
-				// Decode PNG from raw bytes, bypassing canvas to avoid Firefox fingerprinting noise
-				const decoded = await PNGDecoder.decode(tileBuffer);
+				// Use the browser to decode the image from the raw bytes, bypassing the <img> element
+				// to avoid fingerprinting noise introduced by Firefox Enhanced Tracking Protection
+				const bitmap = await createImageBitmap(new Blob([tileBuffer]));
 
 				if (this.disposed)
 				{
 					return;
 				}
 
-				imageData = PNGDecoder.scaleImageData(decoded, this.geometrySize + 1, this.geometrySize + 1);
+				const canvas = CanvasUtils.createOffscreenCanvas(this.geometrySize + 1, this.geometrySize + 1);
+				const context = canvas.getContext('2d') as CanvasRenderingContext2D;
+				context.imageSmoothingEnabled = false;
+				context.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, 0, 0, canvas.width, canvas.height);
+				imageData = context.getImageData(0, 0, canvas.width, canvas.height);
 			}
 			else
 			{

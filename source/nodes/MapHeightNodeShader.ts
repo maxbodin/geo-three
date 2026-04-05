@@ -1,4 +1,4 @@
-import {BufferGeometry, DataTexture, Intersection, LinearFilter, Material, MeshPhongMaterial, NearestFilter, Raycaster, RGBAFormat, Texture, UnsignedByteType, Vector3} from 'three';
+import {BufferGeometry, Intersection, LinearFilter, Material, MeshPhongMaterial, NearestFilter, Raycaster, RGBAFormat, Texture, Vector3} from 'three';
 import {MapHeightNode} from './MapHeightNode';
 import {MapNodeGeometry} from '../geometries/MapNodeGeometry';
 import {MapPlaneNode} from './MapPlaneNode';
@@ -6,7 +6,6 @@ import {UnitsUtils} from '../utils/UnitsUtils';
 import {MapNode, QuadTreePosition} from './MapNode';
 import {MapView} from '../MapView';
 import {TextureUtils} from '../utils/TextureUtils';
-import {PNGDecoder} from '../utils/PNGDecoder';
 
 /**
  * Map height node that uses GPU height calculation to generate the deformed plane mesh.
@@ -126,20 +125,21 @@ export class MapHeightNodeShader extends MapHeightNode
 
 		try 
 		{
-			let texture: Texture | DataTexture;
+			let texture: Texture;
 
 			const tileBuffer = await this.mapView.heightProvider.fetchTileBuffer(this.level, this.x, this.y);
 			if (tileBuffer !== null)
 			{
-				// Decode PNG from raw bytes, bypassing canvas to avoid Firefox fingerprinting noise
-				const decoded = await PNGDecoder.decode(tileBuffer);
+				// Use the browser to decode the image from the raw bytes, bypassing the <img> element
+				// to avoid fingerprinting noise introduced by Firefox Enhanced Tracking Protection
+				const bitmap = await createImageBitmap(new Blob([tileBuffer]));
 
 				if (this.disposed)
 				{
 					return;
 				}
 
-				texture = new DataTexture(decoded.data, decoded.width, decoded.height, RGBAFormat, UnsignedByteType);
+				texture = new Texture(bitmap as any);
 			}
 			else
 			{
