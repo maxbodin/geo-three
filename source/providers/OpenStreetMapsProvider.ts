@@ -29,21 +29,8 @@ export class OpenStreetMapsProvider extends MapProvider
 		this.maxZoom = 19;
 	}
 
-	public fetchTile(zoom: number, x: number, y: number): Promise<any>
+	public fetchTile(zoom: number, x: number, y: number, signal?: AbortSignal): Promise<any>
 	{
-		return new Promise<HTMLImageElement>((resolve, reject) => 
-		{
-			const image = document.createElement('img');
-			image.onload = function() 
-			{
-				resolve(image);
-			};
-			image.onerror = function() 
-			{
-				reject();
-			};
-			image.crossOrigin = 'Anonymous';
-			image.src = this.address + zoom + '/' + x + '/' + y + '.' + this.format;
-		});
+		return this.loadImage(this.address + zoom + '/' + x + '/' + y + '.' + this.format, signal);
 	}
 }

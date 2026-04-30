@@ -335,16 +335,27 @@ export class MapMartiniHeightNode extends MapHeightNode
 			throw new Error('GeoThree: MapView.heightProvider provider is null.');
 		}
 
-		const image = await this.mapView.heightProvider.fetchTile(this.level, this.x, this.y);
-
-		if (this.disposed) 
+		try
 		{
-			return;
+			const image = await this.fetchProviderTile(this.mapView.heightProvider);
+
+			if (this.disposed) 
+			{
+				return;
+			}
+
+			this.processHeight(image);
+
+			this.heightLoaded = true;
 		}
+		catch (error)
+		{
+			if (this.disposed || this.isAbortError(error)) 
+			{
+				return;
+			}
 
-		this.processHeight(image);
-
-		this.heightLoaded = true;
-		this.nodeReady();
+			throw error;
+		}
 	}
 }

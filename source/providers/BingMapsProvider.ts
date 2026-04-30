@@ -142,21 +142,8 @@ export class BingMapsProvider extends MapProvider
 		return quad;
 	}
 
-	public fetchTile(zoom: number, x: number, y: number): Promise<any>
+	public fetchTile(zoom: number, x: number, y: number, signal?: AbortSignal): Promise<any>
 	{
-		return new Promise((resolve, reject) => 
-		{
-			const image = document.createElement('img');
-			image.onload = function() 
-			{
-				resolve(image);
-			};
-			image.onerror = function() 
-			{
-				reject();
-			};
-			image.crossOrigin = 'Anonymous';
-			image.src = 'http://ecn.' + this.subdomain + '.tiles.virtualearth.net/tiles/' + this.type + BingMapsProvider.quadKey(zoom, x, y) + '.jpeg?g=1173';
-		});
+		return this.loadImage('http://ecn.' + this.subdomain + '.tiles.virtualearth.net/tiles/' + this.type + BingMapsProvider.quadKey(zoom, x, y) + '.jpeg?g=1173', signal);
 	}
 }

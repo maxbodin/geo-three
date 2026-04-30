@@ -10,6 +10,8 @@ import {MapProvider} from './providers/MapProvider';
 import {LODControl} from './lod/LODControl';
 import {MapMartiniHeightNode} from './nodes/MapMartiniHeightNode';
 
+export type MapMaterialFactory = (node: MapNode, material: Material | Material[]) => Material | Material[];
+
 /**
  * Map viewer is used to read and display map tiles from a server.
  *
@@ -89,17 +91,23 @@ export class MapView extends Mesh
 	public cacheTiles: boolean = false;
 
 	/**
+	 * Optional hook used to customize node materials at creation time.
+	 */
+	public materialFactory: MapMaterialFactory = null;
+
+	/**
 	 * Constructor for the map view objects.
 	 *
 	 * @param root - Map view node modes can be SPHERICAL, HEIGHT or PLANAR. PLANAR is used by default. Can also be a custom MapNode instance.
 	 * @param provider - Map color tile provider by default a OSM maps provider is used if none specified.
 	 * @param heightProvider - Map height tile provider, by default no height provider is used.
 	 */
-	public constructor(root: (number | MapNode) = MapView.PLANAR, provider: MapProvider = new OpenStreetMapsProvider(), heightProvider: MapProvider = null, lod: LODControl = new LODRaycast()) 
+	public constructor(root: (number | MapNode) = MapView.PLANAR, provider: MapProvider = new OpenStreetMapsProvider(), heightProvider: MapProvider = null, lod: LODControl = new LODRaycast(), materialFactory: MapMaterialFactory = null) 
 	{
 		super(undefined, new MeshBasicMaterial({transparent: true, opacity: 0.0, depthWrite: false, colorWrite: false}));
 
 		this.lod = lod;
+		this.materialFactory = materialFactory;
 
 		this.provider = provider;
 		this.heightProvider = heightProvider;

@@ -6,5 +6,5 @@ export declare class MapTilerProvider extends MapProvider {
     style: string;
     resolution: number;
     constructor(apiKey: any, category: any, style: any, format: any);
-    fetchTile(zoom: number, x: number, y: number): Promise<any>;
+    fetchTile(zoom: number, x: number, y: number, signal?: AbortSignal): Promise<any>;
 }

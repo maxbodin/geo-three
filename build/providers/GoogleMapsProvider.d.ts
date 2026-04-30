@@ -8,5 +8,5 @@ export declare class GoogleMapsProvider extends MapProvider {
     overlay: boolean;
     constructor(apiToken: string);
     createSession(): void;
-    fetchTile(zoom: number, x: number, y: number): Promise<any>;
+    fetchTile(zoom: number, x: number, y: number, signal?: AbortSignal): Promise<any>;
 }

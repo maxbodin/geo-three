@@ -121,7 +121,7 @@ export class MapHeightNode extends MapNode
 
 		try 
 		{
-			const image = await this.mapView.heightProvider.fetchTile(this.level, this.x, this.y);
+			const image = await this.fetchProviderTile(this.mapView.heightProvider);
  
 			if (this.disposed) 
 			{
@@ -140,7 +140,7 @@ export class MapHeightNode extends MapNode
 		}
 		catch (e) 
 		{
-			if (this.disposed) 
+			if (this.disposed || this.isAbortError(e)) 
 			{
 				return;
 			}

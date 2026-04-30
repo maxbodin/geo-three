@@ -12,8 +12,13 @@ export class DebugProvider extends MapProvider
 	 */
 	public resolution: number = 256;
 
-	public fetchTile(zoom: number, x: number, y: number): Promise<any>
+	public fetchTile(zoom: number, x: number, y: number, signal?: AbortSignal): Promise<any>
 	{
+		if (signal?.aborted)
+		{
+			return Promise.reject(this.createAbortError());
+		}
+
 		const canvas = CanvasUtils.createOffscreenCanvas(this.resolution, this.resolution);
 		const context = canvas.getContext('2d') as CanvasRenderingContext2D;
 

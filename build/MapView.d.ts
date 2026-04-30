@@ -2,6 +2,7 @@ import { BufferGeometry, Camera, Group, Material, Mesh, Raycaster, Scene, WebGLR
 import { MapNode } from './nodes/MapNode';
 import { MapProvider } from './providers/MapProvider';
 import { LODControl } from './lod/LODControl';
+export type MapMaterialFactory = (node: MapNode, material: Material | Material[]) => Material | Material[];
 export declare class MapView extends Mesh {
     static PLANAR: number;
     static SPHERICAL: number;
@@ -14,7 +15,8 @@ export declare class MapView extends Mesh {
     heightProvider: MapProvider;
     root: MapNode;
     cacheTiles: boolean;
-    constructor(root?: (number | MapNode), provider?: MapProvider, heightProvider?: MapProvider);
+    materialFactory: MapMaterialFactory;
+    constructor(root?: (number | MapNode), provider?: MapProvider, heightProvider?: MapProvider, lod?: LODControl, materialFactory?: MapMaterialFactory);
     onBeforeRender: (renderer: WebGLRenderer, scene: Scene, camera: Camera, geometry: BufferGeometry, material: Material, group: Group) => void;
     setRoot(root: (MapNode | number)): void;
     preSubdivide(): void;

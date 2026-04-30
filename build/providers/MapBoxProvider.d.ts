@@ -12,5 +12,5 @@ export declare class MapBoxProvider extends MapProvider {
     version: string;
     constructor(apiToken?: string, id?: string, mode?: number, format?: string, useHDPI?: boolean, version?: string);
     getMetaData(): Promise<void>;
-    fetchTile(zoom: number, x: number, y: number): Promise<any>;
+    fetchTile(zoom: number, x: number, y: number, signal?: AbortSignal): Promise<any>;
 }

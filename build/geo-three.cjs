@@ -2,7 +2,7 @@
 
 var three = require('three');
 
-/*! *****************************************************************************
+/******************************************************************************
 Copyright (c) Microsoft Corporation.
 
 Permission to use, copy, modify, and/or distribute this software for any
@@ -16,7 +16,7 @@ LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
 OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 ***************************************************************************** */
-/* global Reflect, Promise */
+/* global Reflect, Promise, SuppressedError, Symbol */
 
 
 function __awaiter(thisArg, _arguments, P, generator) {
@@ -29,16 +29,147 @@ function __awaiter(thisArg, _arguments, P, generator) {
     });
 }
 
+typeof SuppressedError === "function" ? SuppressedError : function (error, suppressed, message) {
+    var e = new Error(message);
+    return e.name = "SuppressedError", e.error = error, e.suppressed = suppressed, e;
+};
+
 class MapProvider {
     constructor() {
+        this.tileCacheMaxSize = 512;
+        this.tileCacheEnabled = true;
+        this.tileCache = new Map();
+        this.pendingTileRequests = new Map();
         this.name = '';
         this.minZoom = 0;
         this.maxZoom = 20;
         this.bounds = [];
         this.center = [];
     }
-    fetchTile(zoom, x, y) {
-        return null;
+    fetchTile(zoom, x, y, signal) {
+        return Promise.reject(new Error('MapProvider.fetchTile() must be implemented by subclasses.'));
+    }
+    fetchCachedTile(zoom, x, y, signal) {
+        if (!this.tileCacheEnabled || this.tileCacheMaxSize <= 0) {
+            return this.fetchTile(zoom, x, y, signal);
+        }
+        const key = this.createTileCacheKey(zoom, x, y);
+        const cachedTile = this.tileCache.get(key);
+        if (cachedTile !== undefined) {
+            this.tileCache.delete(key);
+            this.tileCache.set(key, cachedTile);
+            return (signal === null || signal === void 0 ? void 0 : signal.aborted) ? Promise.reject(this.createAbortError()) : Promise.resolve(cachedTile);
+        }
+        let pending = this.pendingTileRequests.get(key);
+        if (pending === undefined) {
+            const controller = new AbortController();
+            const promise = this.fetchTile(zoom, x, y, controller.signal)
+                .then((tile) => {
+                this.pendingTileRequests.delete(key);
+                this.setCachedTile(key, tile);
+                return tile;
+            })
+                .catch((error) => {
+                this.pendingTileRequests.delete(key);
+                throw error;
+            });
+            pending = { promise, controller, consumers: 0 };
+            this.pendingTileRequests.set(key, pending);
+            promise.catch(() => undefined);
+        }
+        return this.consumePendingTile(key, pending, signal);
+    }
+    clearTileCache() {
+        this.tileCache.clear();
+        this.pendingTileRequests.forEach((request) => request.controller.abort());
+        this.pendingTileRequests.clear();
+    }
+    loadImage(source, signal, crossOrigin = 'Anonymous') {
+        return new Promise((resolve, reject) => {
+            if (signal === null || signal === void 0 ? void 0 : signal.aborted) {
+                reject(this.createAbortError());
+                return;
+            }
+            const image = document.createElement('img');
+            const cleanup = () => {
+                image.onload = null;
+                image.onerror = null;
+                signal === null || signal === void 0 ? void 0 : signal.removeEventListener('abort', abort);
+            };
+            const abort = () => {
+                cleanup();
+                image.src = '';
+                reject(this.createAbortError());
+            };
+            image.onload = () => {
+                cleanup();
+                resolve(image);
+            };
+            image.onerror = () => {
+                cleanup();
+                reject(new Error('Failed to load tile image: ' + source));
+            };
+            image.crossOrigin = crossOrigin;
+            signal === null || signal === void 0 ? void 0 : signal.addEventListener('abort', abort, { once: true });
+            image.src = source;
+        });
+    }
+    createTileCacheKey(zoom, x, y) {
+        return zoom + '/' + x + '/' + y;
+    }
+    createAbortError() {
+        if (typeof DOMException !== 'undefined') {
+            return new DOMException('Tile request aborted.', 'AbortError');
+        }
+        const error = new Error('Tile request aborted.');
+        error.name = 'AbortError';
+        return error;
+    }
+    consumePendingTile(key, pending, signal) {
+        if (signal === null || signal === void 0 ? void 0 : signal.aborted) {
+            return Promise.reject(this.createAbortError());
+        }
+        pending.consumers++;
+        return new Promise((resolve, reject) => {
+            let settled = false;
+            const release = () => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                signal === null || signal === void 0 ? void 0 : signal.removeEventListener('abort', abort);
+                pending.consumers = Math.max(0, pending.consumers - 1);
+                if (pending.consumers === 0 && this.pendingTileRequests.get(key) === pending) {
+                    pending.controller.abort();
+                }
+            };
+            const abort = () => {
+                release();
+                reject(this.createAbortError());
+            };
+            signal === null || signal === void 0 ? void 0 : signal.addEventListener('abort', abort, { once: true });
+            pending.promise.then((tile) => {
+                if (settled) {
+                    return;
+                }
+                release();
+                resolve(tile);
+            }, (error) => {
+                if (settled) {
+                    return;
+                }
+                release();
+                reject(error);
+            });
+        });
+    }
+    setCachedTile(key, tile) {
+        this.tileCache.delete(key);
+        this.tileCache.set(key, tile);
+        while (this.tileCache.size > this.tileCacheMaxSize) {
+            const oldestKey = this.tileCache.keys().next().value;
+            this.tileCache.delete(oldestKey);
+        }
     }
     getMetaData() {
         return __awaiter(this, void 0, void 0, function* () { });
@@ -52,18 +183,8 @@ class OpenStreetMapsProvider extends MapProvider {
         this.format = 'png';
         this.maxZoom = 19;
     }
-    fetchTile(zoom, x, y) {
-        return new Promise((resolve, reject) => {
-            const image = document.createElement('img');
-            image.onload = function () {
-                resolve(image);
-            };
-            image.onerror = function () {
-                reject();
-            };
-            image.crossOrigin = 'Anonymous';
-            image.src = this.address + zoom + '/' + x + '/' + y + '.' + this.format;
-        });
+    fetchTile(zoom, x, y, signal) {
+        return this.loadImage(this.address + zoom + '/' + x + '/' + y + '.' + this.format, signal);
     }
 }
 
@@ -114,6 +235,7 @@ class MapNode extends three.Mesh {
         this.nodesLoaded = 0;
         this.childrenCache = null;
         this.isMesh = true;
+        this.tileRequestController = null;
         this.mapView = mapView;
         this.parentNode = parentNode;
         this.disposed = false;
@@ -121,6 +243,8 @@ class MapNode extends three.Mesh {
         this.level = level;
         this.x = x;
         this.y = y;
+        this.applyMapViewRenderOrder();
+        this.applyMaterialFactory();
         this.initialize();
     }
     initialize() {
@@ -136,9 +260,11 @@ class MapNode extends three.Mesh {
             this.isMesh = false;
             this.children = this.childrenCache;
             this.nodesLoaded = this.childrenCache.length;
+            this.applyMapViewRenderOrderToChildren();
         }
         else {
             this.createChildNodes();
+            this.applyMapViewRenderOrderToChildren();
         }
         this.subdivided = true;
     }
@@ -169,17 +295,31 @@ class MapNode extends three.Mesh {
                 return;
             }
             try {
-                const image = yield this.mapView.provider.fetchTile(this.level, this.x, this.y);
+                const image = yield this.fetchProviderTile(this.mapView.provider);
                 yield this.applyTexture(image);
             }
             catch (e) {
-                if (this.disposed) {
+                if (this.disposed || this.isAbortError(e)) {
                     return;
                 }
                 console.warn('Geo-Three: Failed to load node tile data.', this);
                 this.material.map = MapNode.defaultTexture;
             }
             this.material.needsUpdate = true;
+            this.tileRequestController = null;
+        });
+    }
+    fetchProviderTile(provider) {
+        var _a;
+        return __awaiter(this, void 0, void 0, function* () {
+            (_a = this.tileRequestController) === null || _a === void 0 ? void 0 : _a.abort();
+            const controller = new AbortController();
+            this.tileRequestController = controller;
+            const image = yield provider.fetchCachedTile(this.level, this.x, this.y, controller.signal);
+            if (this.disposed || controller.signal.aborted) {
+                throw this.createAbortError();
+            }
+            return image;
         });
     }
     applyTexture(image) {
@@ -205,6 +345,7 @@ class MapNode extends three.Mesh {
             this.dispose();
             return;
         }
+        this.applyMapViewRenderOrder();
         if (this.parentNode !== null) {
             this.parentNode.nodesLoaded++;
             if (this.parentNode.nodesLoaded === MapNode.childrens) {
@@ -212,6 +353,7 @@ class MapNode extends three.Mesh {
                     this.parentNode.isMesh = false;
                 }
                 for (let i = 0; i < this.parentNode.children.length; i++) {
+                    this.parentNode.children[i].applyMapViewRenderOrder();
                     this.parentNode.children[i].visible = true;
                 }
             }
@@ -224,7 +366,10 @@ class MapNode extends three.Mesh {
         }
     }
     dispose() {
+        var _a;
         this.disposed = true;
+        (_a = this.tileRequestController) === null || _a === void 0 ? void 0 : _a.abort();
+        this.tileRequestController = null;
         const self = this;
         try {
             const material = self.material;
@@ -238,6 +383,37 @@ class MapNode extends three.Mesh {
             self.geometry.dispose();
         }
         catch (e) { }
+    }
+    applyMapViewRenderOrder() {
+        if (this.mapView !== null) {
+            this.renderOrder = this.mapView.renderOrder;
+        }
+    }
+    applyMapViewRenderOrderToChildren() {
+        for (let i = 0; i < this.children.length; i++) {
+            this.children[i].applyMapViewRenderOrder();
+        }
+    }
+    applyMaterialFactory() {
+        var _a;
+        if (((_a = this.mapView) === null || _a === void 0 ? void 0 : _a.materialFactory) === undefined || this.mapView.materialFactory === null) {
+            return;
+        }
+        const material = this.mapView.materialFactory(this, this.material);
+        if (material !== undefined && material !== null) {
+            this.material = material;
+        }
+    }
+    isAbortError(error) {
+        return (error === null || error === void 0 ? void 0 : error.name) === 'AbortError';
+    }
+    createAbortError() {
+        if (typeof DOMException !== 'undefined') {
+            return new DOMException('Tile request aborted.', 'AbortError');
+        }
+        const error = new Error('Tile request aborted.');
+        error.name = 'AbortError';
+        return error;
     }
 }
 MapNode.defaultTexture = TextureUtils.createFillTexture();
@@ -592,7 +768,7 @@ class MapHeightNode extends MapNode {
                 return;
             }
             try {
-                const image = yield this.mapView.heightProvider.fetchTile(this.level, this.x, this.y);
+                const image = yield this.fetchProviderTile(this.mapView.heightProvider);
                 if (this.disposed) {
                     return;
                 }
@@ -604,7 +780,7 @@ class MapHeightNode extends MapNode {
                 this.geometry = new MapNodeHeightGeometry(1, 1, this.geometrySize, this.geometrySize, true, 10.0, imageData, true);
             }
             catch (e) {
-                if (this.disposed) {
+                if (this.disposed || this.isAbortError(e)) {
                     return;
                 }
                 this.geometry = MapPlaneNode.baseGeometry;
@@ -706,15 +882,19 @@ class MapSphereNode extends MapNode {
     constructor(parentNode = null, mapView = null, location = QuadTreePosition.root, level = 0, x = 0, y = 0) {
         let bounds = UnitsUtils.tileBounds(level, x, y);
         const vertexShader = `
+		#include <common>
+		#include <logdepthbuf_pars_vertex>
 		varying vec3 vPosition;
 
 		void main() {
 			vPosition = position;
 			gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+			#include <logdepthbuf_vertex>
 		}
 		`;
         const fragmentShader = `
-		#define PI 3.1415926538
+		#include <common>
+		#include <logdepthbuf_pars_fragment>
 		varying vec3 vPosition;
 		uniform sampler2D uTexture;
 		uniform vec4 webMercatorBounds;
@@ -733,6 +913,7 @@ class MapSphereNode extends MapNode {
 
 			vec4 color = texture2D(uTexture, vec2(x, y));
 			gl_FragColor = color;
+			#include <logdepthbuf_fragment>
 			${parseInt(three.REVISION) < 152 ? '' : `
 				#include <tonemapping_fragment>
 				#include ${parseInt(three.REVISION) >= 154 ? '<colorspace_fragment>' : '<encodings_fragment>'}
@@ -777,14 +958,19 @@ class MapSphereNode extends MapNode {
     }
     applyTexture(image) {
         return __awaiter(this, void 0, void 0, function* () {
-            const textureLoader = new three.TextureLoader();
-            const texture = textureLoader.load(image.src, function () {
-                if (parseInt(three.REVISION) >= 152) {
-                    texture.colorSpace = 'srgb';
-                }
-            });
+            if (this.disposed) {
+                return;
+            }
+            const texture = new three.Texture(image);
+            if (parseInt(three.REVISION) >= 152) {
+                texture.colorSpace = 'srgb';
+            }
+            texture.generateMipmaps = false;
+            texture.format = three.RGBAFormat;
+            texture.magFilter = three.LinearFilter;
+            texture.minFilter = three.LinearFilter;
+            texture.needsUpdate = true;
             this.material.uniforms.uTexture.value = texture;
-            this.material.uniforms.uTexture.needsUpdate = true;
         });
     }
     applyScaleNode() {
@@ -804,7 +990,12 @@ class MapSphereNode extends MapNode {
     }
     updateMatrixWorld(force = false) {
         if (this.matrixWorldNeedsUpdate || force) {
-            this.matrixWorld.copy(this.matrix);
+            if (this.parent !== null) {
+                this.matrixWorld.multiplyMatrices(this.parent.matrixWorld, this.matrix);
+            }
+            else {
+                this.matrixWorld.copy(this.matrix);
+            }
             this.matrixWorldNeedsUpdate = false;
         }
     }
@@ -852,7 +1043,7 @@ class MapHeightNodeShader extends MapHeightNode {
 			#include <fog_vertex>
 	
 			// Calculate height of the title
-			vec4 _theight = texture2D(heightMap, vUv);
+			vec4 _theight = texture2D(heightMap, vMapUv);
 			float _height = ((_theight.r * 255.0 * 65536.0 + _theight.g * 255.0 * 256.0 + _theight.b * 255.0) * 0.1) - 10000.0;
 			vec3 _transformed = position + _height * normal;
 	
@@ -883,7 +1074,7 @@ class MapHeightNodeShader extends MapHeightNode {
                 return;
             }
             try {
-                const image = yield this.mapView.heightProvider.fetchTile(this.level, this.x, this.y);
+                const image = yield this.fetchProviderTile(this.mapView.heightProvider);
                 if (this.disposed) {
                     return;
                 }
@@ -896,7 +1087,7 @@ class MapHeightNodeShader extends MapHeightNode {
                 this.material.userData.heightMap.value = texture;
             }
             catch (e) {
-                if (this.disposed) {
+                if (this.disposed || this.isAbortError(e)) {
                     return;
                 }
                 console.error('Geo-Three: Failed to load node tile height data.', this);
@@ -1379,13 +1570,20 @@ class MapMartiniHeightNode extends MapHeightNode {
             if (this.mapView.heightProvider === null) {
                 throw new Error('GeoThree: MapView.heightProvider provider is null.');
             }
-            const image = yield this.mapView.heightProvider.fetchTile(this.level, this.x, this.y);
-            if (this.disposed) {
-                return;
+            try {
+                const image = yield this.fetchProviderTile(this.mapView.heightProvider);
+                if (this.disposed) {
+                    return;
+                }
+                this.processHeight(image);
+                this.heightLoaded = true;
             }
-            this.processHeight(image);
-            this.heightLoaded = true;
-            this.nodeReady();
+            catch (error) {
+                if (this.disposed || this.isAbortError(error)) {
+                    return;
+                }
+                throw error;
+            }
         });
     }
 }
@@ -1395,17 +1593,19 @@ MapMartiniHeightNode.geometry = new MapNodeGeometry(1, 1, 1, 1);
 MapMartiniHeightNode.tileSize = 256;
 
 class MapView extends three.Mesh {
-    constructor(root = MapView.PLANAR, provider = new OpenStreetMapsProvider(), heightProvider = null) {
+    constructor(root = MapView.PLANAR, provider = new OpenStreetMapsProvider(), heightProvider = null, lod = new LODRaycast(), materialFactory = null) {
         super(undefined, new three.MeshBasicMaterial({ transparent: true, opacity: 0.0, depthWrite: false, colorWrite: false }));
         this.lod = null;
         this.provider = null;
         this.heightProvider = null;
         this.root = null;
         this.cacheTiles = false;
+        this.materialFactory = null;
         this.onBeforeRender = (renderer, scene, camera, geometry, material, group) => {
             this.lod.updateLOD(this, camera, renderer, scene);
         };
-        this.lod = new LODRaycast();
+        this.lod = lod;
+        this.materialFactory = materialFactory;
         this.provider = provider;
         this.heightProvider = heightProvider;
         this.setRoot(root);
@@ -1502,20 +1702,49 @@ MapView.mapModes = new Map([
     [MapView.MARTINI, MapMartiniHeightNode]
 ]);
 
-const pov$1 = new three.Vector3();
-const position$1 = new three.Vector3();
+const pov$2 = new three.Vector3();
+const position$2 = new three.Vector3();
 class LODRadial {
     constructor(subdivideDistance = 50, simplifyDistance = 300) {
         this.subdivideDistance = subdivideDistance;
         this.simplifyDistance = simplifyDistance;
     }
     updateLOD(view, camera, renderer, scene) {
+        camera.getWorldPosition(pov$2);
+        view.children[0].traverse((node) => {
+            node.getWorldPosition(position$2);
+            let distance = pov$2.distanceTo(position$2);
+            distance /= Math.pow(2, view.provider.maxZoom - node.level);
+            if (distance < this.subdivideDistance) {
+                node.subdivide();
+            }
+            else if (distance > this.simplifyDistance && node.parentNode) {
+                node.parentNode.simplify();
+            }
+        });
+    }
+}
+
+const projection$1 = new three.Matrix4();
+const pov$1 = new three.Vector3();
+const frustum$1 = new three.Frustum();
+const position$1 = new three.Vector3();
+class LODFrustum extends LODRadial {
+    constructor(subdivideDistance = 120, simplifyDistance = 400) {
+        super(subdivideDistance, simplifyDistance);
+        this.testCenter = true;
+        this.pointOnly = false;
+    }
+    updateLOD(view, camera, renderer, scene) {
+        projection$1.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+        frustum$1.setFromProjectionMatrix(projection$1);
         camera.getWorldPosition(pov$1);
         view.children[0].traverse((node) => {
             node.getWorldPosition(position$1);
             let distance = pov$1.distanceTo(position$1);
             distance /= Math.pow(2, view.provider.maxZoom - node.level);
-            if (distance < this.subdivideDistance) {
+            const inFrustum = this.pointOnly ? frustum$1.containsPoint(position$1) : frustum$1.intersectsObject(node);
+            if (distance < this.subdivideDistance && inFrustum) {
                 node.subdivide();
             }
             else if (distance > this.simplifyDistance && node.parentNode) {
@@ -1529,26 +1758,48 @@ const projection = new three.Matrix4();
 const pov = new three.Vector3();
 const frustum = new three.Frustum();
 const position = new three.Vector3();
-class LODFrustum extends LODRadial {
-    constructor(subdivideDistance = 120, simplifyDistance = 400) {
-        super(subdivideDistance, simplifyDistance);
-        this.testCenter = true;
-        this.pointOnly = false;
-    }
+const zoomLevelPixelRatios = [
+    78271.484, 39135.742, 19567.871, 9783.936, 4891.968, 2445.984, 1222.992,
+    611.496, 305.748, 152.874, 76.437, 38.218, 19.109, 9.555, 4.777, 2.389, 1.194,
+    0.597, 0.299, 0.149, 0.075, 0.037, 0.019
+];
+class LODFrustumOrthographic extends LODFrustum {
     updateLOD(view, camera, renderer, scene) {
+        const isOrthographic = camera.isOrthographicCamera;
+        if (!isOrthographic) {
+            super.updateLOD(view, camera, renderer, scene);
+            return;
+        }
         projection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
         frustum.setFromProjectionMatrix(projection);
         camera.getWorldPosition(pov);
-        view.children[0].traverse((node) => {
+        view.children[0].traverse((obj) => {
+            var _a;
+            const node = obj;
             node.getWorldPosition(position);
-            let distance = pov.distanceTo(position);
-            distance /= Math.pow(2, view.provider.maxZoom - node.level);
-            const inFrustum = this.pointOnly ? frustum.containsPoint(position) : frustum.intersectsObject(node);
-            if (distance < this.subdivideDistance && inFrustum) {
-                node.subdivide();
-            }
-            else if (distance > this.simplifyDistance && node.parentNode) {
-                node.parentNode.simplify();
+            const nodeBox = new three.Box3().setFromObject(node);
+            let distance = nodeBox.distanceToPoint(pov);
+            distance /= Math.pow(2, (view.provider.maxZoom - node.level));
+            const inFrustum = frustum.intersectsObject(node);
+            if (inFrustum) {
+                const metresPerPixel = 1 / camera.zoom;
+                let closestZoomLevel = 0;
+                let minDifference = Number.POSITIVE_INFINITY;
+                for (let i = 0; i < zoomLevelPixelRatios.length; i++) {
+                    const difference = Math.abs(zoomLevelPixelRatios[i] - metresPerPixel);
+                    if (difference < minDifference) {
+                        minDifference = difference;
+                        closestZoomLevel = i;
+                    }
+                }
+                if (node.level < closestZoomLevel) {
+                    if (!(node.children.length > 0)) {
+                        node.subdivide();
+                    }
+                }
+                else if (node.level > closestZoomLevel) {
+                    (_a = node.parentNode) === null || _a === void 0 ? void 0 : _a.simplify();
+                }
             }
         });
     }
@@ -1650,18 +1901,8 @@ class BingMapsProvider extends MapProvider {
         }
         return quad;
     }
-    fetchTile(zoom, x, y) {
-        return new Promise((resolve, reject) => {
-            const image = document.createElement('img');
-            image.onload = function () {
-                resolve(image);
-            };
-            image.onerror = function () {
-                reject();
-            };
-            image.crossOrigin = 'Anonymous';
-            image.src = 'http://ecn.' + this.subdomain + '.tiles.virtualearth.net/tiles/' + this.type + BingMapsProvider.quadKey(zoom, x, y) + '.jpeg?g=1173';
-        });
+    fetchTile(zoom, x, y, signal) {
+        return this.loadImage('http://ecn.' + this.subdomain + '.tiles.virtualearth.net/tiles/' + this.type + BingMapsProvider.quadKey(zoom, x, y) + '.jpeg?g=1173', signal);
     }
 }
 BingMapsProvider.ADDRESS = 'https://dev.virtualearth.net';
@@ -1698,18 +1939,8 @@ class GoogleMapsProvider extends MapProvider {
             throw new Error('Unable to create a google maps session.');
         });
     }
-    fetchTile(zoom, x, y) {
-        return new Promise((resolve, reject) => {
-            const image = document.createElement('img');
-            image.onload = function () {
-                resolve(image);
-            };
-            image.onerror = function () {
-                reject();
-            };
-            image.crossOrigin = 'Anonymous';
-            image.src = 'https://tile.googleapis.com/v1/2dtiles/' + zoom + '/' + x + '/' + y + '?session=' + this.sessionToken + '&orientation=' + this.orientation + '&key=' + this.apiToken;
-        });
+    fetchTile(zoom, x, y, signal) {
+        return this.loadImage('https://tile.googleapis.com/v1/2dtiles/' + zoom + '/' + x + '/' + y + '?session=' + this.sessionToken + '&orientation=' + this.orientation + '&key=' + this.apiToken, signal);
     }
 }
 
@@ -1731,21 +1962,11 @@ class HereMapsProvider extends MapProvider {
     getMetaData() {
         return __awaiter(this, void 0, void 0, function* () { });
     }
-    fetchTile(zoom, x, y) {
+    fetchTile(zoom, x, y, signal) {
         this.nextServer();
-        return new Promise((resolve, reject) => {
-            const image = document.createElement('img');
-            image.onload = function () {
-                resolve(image);
-            };
-            image.onerror = function () {
-                reject();
-            };
-            image.crossOrigin = 'Anonymous';
-            image.src = 'https://' + this.server + '.' + this.style + '.maps.api.here.com/maptile/2.1/maptile/' +
-                this.version + '/' + this.scheme + '/' + zoom + '/' + x + '/' + y + '/' +
-                this.size + '/' + this.format + '?app_id=' + this.appId + '&app_code=' + this.appCode;
-        });
+        return this.loadImage('https://' + this.server + '.' + this.style + '.maps.api.here.com/maptile/2.1/maptile/' +
+            this.version + '/' + this.scheme + '/' + zoom + '/' + x + '/' + y + '/' +
+            this.size + '/' + this.format + '?app_id=' + this.appId + '&app_code=' + this.appCode, signal);
     }
 }
 HereMapsProvider.PATH = '/maptile/2.1/';
@@ -1773,23 +1994,11 @@ class MapBoxProvider extends MapProvider {
             this.center = meta.center;
         });
     }
-    fetchTile(zoom, x, y) {
-        return new Promise((resolve, reject) => {
-            const image = document.createElement('img');
-            image.onload = function () {
-                resolve(image);
-            };
-            image.onerror = function () {
-                reject();
-            };
-            image.crossOrigin = 'Anonymous';
-            if (this.mode === MapBoxProvider.STYLE) {
-                image.src = MapBoxProvider.ADDRESS + 'styles/v1/' + this.style + '/tiles/' + zoom + '/' + x + '/' + y + (this.useHDPI ? '@2x?access_token=' : '?access_token=') + this.apiToken;
-            }
-            else {
-                image.src = MapBoxProvider.ADDRESS + 'v4/' + this.mapId + '/' + zoom + '/' + x + '/' + y + (this.useHDPI ? '@2x.' : '.') + this.format + '?access_token=' + this.apiToken;
-            }
-        });
+    fetchTile(zoom, x, y, signal) {
+        if (this.mode === MapBoxProvider.STYLE) {
+            return this.loadImage(MapBoxProvider.ADDRESS + 'styles/v1/' + this.style + '/tiles/' + zoom + '/' + x + '/' + y + (this.useHDPI ? '@2x?access_token=' : '?access_token=') + this.apiToken, signal);
+        }
+        return this.loadImage(MapBoxProvider.ADDRESS + 'v4/' + this.mapId + '/' + zoom + '/' + x + '/' + y + (this.useHDPI ? '@2x.' : '.') + this.format + '?access_token=' + this.apiToken, signal);
     }
 }
 MapBoxProvider.ADDRESS = 'https://api.mapbox.com/';
@@ -1805,18 +2014,8 @@ class MapTilerProvider extends MapProvider {
         this.style = style !== undefined ? style : 'satellite';
         this.resolution = 512;
     }
-    fetchTile(zoom, x, y) {
-        return new Promise((resolve, reject) => {
-            const image = document.createElement('img');
-            image.onload = function () {
-                resolve(image);
-            };
-            image.onerror = function () {
-                reject();
-            };
-            image.crossOrigin = 'Anonymous';
-            image.src = 'https://api.maptiler.com/' + this.category + '/' + this.style + '/' + zoom + '/' + x + '/' + y + '.' + this.format + '?key=' + this.apiKey;
-        });
+    fetchTile(zoom, x, y, signal) {
+        return this.loadImage('https://api.maptiler.com/' + this.category + '/' + this.style + '/' + zoom + '/' + x + '/' + y + '.' + this.format + '?key=' + this.apiKey, signal);
     }
 }
 
@@ -1840,18 +2039,8 @@ class OpenMapTilesProvider extends MapProvider {
             this.center = meta.center;
         });
     }
-    fetchTile(zoom, x, y) {
-        return new Promise((resolve, reject) => {
-            const image = document.createElement('img');
-            image.onload = function () {
-                resolve(image);
-            };
-            image.onerror = function () {
-                reject();
-            };
-            image.crossOrigin = 'Anonymous';
-            image.src = this.address + 'styles/' + this.theme + '/' + zoom + '/' + x + '/' + y + '.' + this.format;
-        });
+    fetchTile(zoom, x, y, signal) {
+        return this.loadImage(this.address + 'styles/' + this.theme + '/' + zoom + '/' + x + '/' + y + '.' + this.format, signal);
     }
 }
 
@@ -1860,7 +2049,10 @@ class DebugProvider extends MapProvider {
         super(...arguments);
         this.resolution = 256;
     }
-    fetchTile(zoom, x, y) {
+    fetchTile(zoom, x, y, signal) {
+        if (signal === null || signal === void 0 ? void 0 : signal.aborted) {
+            return Promise.reject(this.createAbortError());
+        }
         const canvas = CanvasUtils.createOffscreenCanvas(this.resolution, this.resolution);
         const context = canvas.getContext('2d');
         const green = new three.Color(0x00ff00);
@@ -1885,9 +2077,9 @@ class HeightDebugProvider extends MapProvider {
         this.toColor = new three.Color(0x00ff00);
         this.provider = provider;
     }
-    fetchTile(zoom, x, y) {
+    fetchTile(zoom, x, y, signal) {
         return __awaiter(this, void 0, void 0, function* () {
-            const image = yield this.provider.fetchTile(zoom, x, y);
+            const image = yield this.provider.fetchCachedTile(zoom, x, y, signal);
             const resolution = 256;
             const canvas = CanvasUtils.createOffscreenCanvas(resolution, resolution);
             const context = canvas.getContext('2d');
@@ -2011,6 +2203,7 @@ exports.GoogleMapsProvider = GoogleMapsProvider;
 exports.HeightDebugProvider = HeightDebugProvider;
 exports.HereMapsProvider = HereMapsProvider;
 exports.LODFrustum = LODFrustum;
+exports.LODFrustumOrthographic = LODFrustumOrthographic;
 exports.LODRadial = LODRadial;
 exports.LODRaycast = LODRaycast;
 exports.MapBoxProvider = MapBoxProvider;

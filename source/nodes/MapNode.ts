@@ -1,5 +1,6 @@
 import {LinearFilter, Material, Mesh, Texture, Vector3, BufferGeometry, Object3D, RGBAFormat, REVISION} from 'three';
 import {MapView} from '../MapView';
+import {MapProvider} from '../providers/MapProvider';
 import {TextureUtils} from '../utils/TextureUtils';
 
 /**
@@ -144,6 +145,8 @@ export abstract class MapNode extends Mesh
 	// @ts-ignore
 	public isMesh: true = true;
 
+	private tileRequestController: AbortController = null;
+
 	public constructor(parentNode: MapNode = null, mapView: MapView = null, location: number = QuadTreePosition.root, level: number = 0, x: number = 0, y: number = 0, geometry: BufferGeometry = null, material: Material = null) 
 	{
 		super(geometry, material);
@@ -156,6 +159,9 @@ export abstract class MapNode extends Mesh
 		this.level = level;
 		this.x = x;
 		this.y = y;
+
+		this.applyMapViewRenderOrder();
+		this.applyMaterialFactory();
 
 		this.initialize();
 	}
@@ -193,10 +199,12 @@ export abstract class MapNode extends Mesh
 			this.isMesh = false;
 			this.children = this.childrenCache;
 			this.nodesLoaded = this.childrenCache.length;
+			this.applyMapViewRenderOrderToChildren();
 		}
 		else 
 		{
 			this.createChildNodes();
+			this.applyMapViewRenderOrderToChildren();
 		}
 
 		this.subdivided = true;
@@ -258,12 +266,12 @@ export abstract class MapNode extends Mesh
 
 		try 
 		{
-			const image: HTMLImageElement = await this.mapView.provider.fetchTile(this.level, this.x, this.y);
+			const image = await this.fetchProviderTile(this.mapView.provider);
 			await this.applyTexture(image);
 		}
 		catch (e) 
 		{
-			if (this.disposed) 
+			if (this.disposed || this.isAbortError(e)) 
 			{
 				return;
 			}
@@ -276,6 +284,22 @@ export abstract class MapNode extends Mesh
 
 		// @ts-ignore
 		this.material.needsUpdate = true;
+		this.tileRequestController = null;
+	}
+
+	protected async fetchProviderTile(provider: MapProvider): Promise<HTMLImageElement>
+	{
+		this.tileRequestController?.abort();
+		const controller = new AbortController();
+		this.tileRequestController = controller;
+
+		const image = await provider.fetchCachedTile(this.level, this.x, this.y, controller.signal);
+		if (this.disposed || controller.signal.aborted)
+		{
+			throw this.createAbortError();
+		}
+
+		return image;
 	}
 
 	public async applyTexture(image: HTMLImageElement): Promise<void> 
@@ -314,6 +338,8 @@ export abstract class MapNode extends Mesh
 			return;
 		}
 
+		this.applyMapViewRenderOrder();
+
 		if (this.parentNode !== null) 
 		{
 			this.parentNode.nodesLoaded++;
@@ -328,6 +354,7 @@ export abstract class MapNode extends Mesh
 				
 				for (let i = 0; i < this.parentNode.children.length; i++) 
 				{
+					(this.parentNode.children[i] as MapNode).applyMapViewRenderOrder();
 					this.parentNode.children[i].visible = true;
 				}
 			}
@@ -352,6 +379,8 @@ export abstract class MapNode extends Mesh
 	public dispose(): void 
 	{
 		this.disposed = true;
+		this.tileRequestController?.abort();
+		this.tileRequestController = null;
 
 		const self = this as Mesh;
 
@@ -374,5 +403,52 @@ export abstract class MapNode extends Mesh
 			self.geometry.dispose();
 		}
 		catch (e) {}	
+	}
+
+	protected applyMapViewRenderOrder(): void
+	{
+		if (this.mapView !== null)
+		{
+			this.renderOrder = this.mapView.renderOrder;
+		}
+	}
+
+	private applyMapViewRenderOrderToChildren(): void
+	{
+		for (let i = 0; i < this.children.length; i++)
+		{
+			(this.children[i] as MapNode).applyMapViewRenderOrder();
+		}
+	}
+
+	private applyMaterialFactory(): void
+	{
+		if (this.mapView?.materialFactory === undefined || this.mapView.materialFactory === null)
+		{
+			return;
+		}
+
+		const material = this.mapView.materialFactory(this, this.material);
+		if (material !== undefined && material !== null)
+		{
+			this.material = material;
+		}
+	}
+
+	protected isAbortError(error: any): boolean
+	{
+		return error?.name === 'AbortError';
+	}
+
+	private createAbortError(): Error
+	{
+		if (typeof DOMException !== 'undefined')
+		{
+			return new DOMException('Tile request aborted.', 'AbortError');
+		}
+
+		const error = new Error('Tile request aborted.');
+		error.name = 'AbortError';
+		return error;
 	}
 }

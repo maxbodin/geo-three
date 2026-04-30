@@ -5,5 +5,5 @@ export declare class OpenMapTilesProvider extends MapProvider {
     theme: string;
     constructor(address: string, format?: string, theme?: string);
     getMetaData(): Promise<void>;
-    fetchTile(zoom: number, x: number, y: number): Promise<any>;
+    fetchTile(zoom: number, x: number, y: number, signal?: AbortSignal): Promise<any>;
 }

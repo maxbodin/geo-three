@@ -54,21 +54,8 @@ export class MapTilerProvider extends MapProvider
 		this.resolution = 512;
 	}
 
-	public fetchTile(zoom: number, x: number, y: number): Promise<any> 
+	public fetchTile(zoom: number, x: number, y: number, signal?: AbortSignal): Promise<any> 
 	{
-		return new Promise((resolve, reject) => 
-		{
-			const image = document.createElement('img');
-			image.onload = function() 
-			{
-				resolve(image);
-			};
-			image.onerror = function() 
-			{
-				reject();
-			};
-			image.crossOrigin = 'Anonymous';
-			image.src = 'https://api.maptiler.com/' + this.category + '/' + this.style + '/' + zoom + '/' + x + '/' + y + '.' + this.format + '?key=' + this.apiKey;
-		});
+		return this.loadImage('https://api.maptiler.com/' + this.category + '/' + this.style + '/' + zoom + '/' + x + '/' + y + '.' + this.format + '?key=' + this.apiKey, signal);
 	}
 }

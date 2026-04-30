@@ -122,26 +122,12 @@ export class HereMapsProvider extends MapProvider
 
 	public async getMetaData(): Promise<void> {}
 
-	public fetchTile(zoom: number, x: number, y: number): Promise<any>
+	public fetchTile(zoom: number, x: number, y: number, signal?: AbortSignal): Promise<any>
 	{
 		this.nextServer();
 
-		return new Promise((resolve, reject) => 
-		{
-			const image = document.createElement('img');
-			image.onload = function() 
-			{
-				resolve(image);
-			};
-			image.onerror = function() 
-			{
-				reject();
-			};
-			image.crossOrigin = 'Anonymous';
-
-			image.src = 'https://' + this.server + '.' + this.style + '.maps.api.here.com/maptile/2.1/maptile/' +
-				this.version + '/' + this.scheme + '/' + zoom + '/' + x + '/' + y + '/' +
-				this.size + '/' + this.format + '?app_id=' + this.appId + '&app_code=' + this.appCode;
-		});
+		return this.loadImage('https://' + this.server + '.' + this.style + '.maps.api.here.com/maptile/2.1/maptile/' +
+			this.version + '/' + this.scheme + '/' + zoom + '/' + x + '/' + y + '/' +
+			this.size + '/' + this.format + '?app_id=' + this.appId + '&app_code=' + this.appCode, signal);
 	}
 }

@@ -31,9 +31,9 @@ export class HeightDebugProvider extends MapProvider
 		this.provider = provider;
 	}
 
-	public async fetchTile(zoom: number, x: number, y: number): Promise<any>
+	public async fetchTile(zoom: number, x: number, y: number, signal?: AbortSignal): Promise<any>
 	{
-		const image = await this.provider.fetchTile(zoom, x, y);
+		const image = await this.provider.fetchCachedTile(zoom, x, y, signal);
 		const resolution = 256;
 
 		const canvas = CanvasUtils.createOffscreenCanvas(resolution, resolution);

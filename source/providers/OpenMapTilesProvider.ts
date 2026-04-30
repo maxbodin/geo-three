@@ -54,21 +54,8 @@ export class OpenMapTilesProvider extends MapProvider
 		this.center = meta.center;
 	}
 
-	public fetchTile(zoom: number, x: number, y: number): Promise<any>
+	public fetchTile(zoom: number, x: number, y: number, signal?: AbortSignal): Promise<any>
 	{
-		return new Promise((resolve, reject) => 
-		{
-			const image = document.createElement('img');
-			image.onload = function() 
-			{
-				resolve(image);
-			};
-			image.onerror = function() 
-			{
-				reject();
-			};
-			image.crossOrigin = 'Anonymous';
-			image.src = this.address + 'styles/' + this.theme + '/' + zoom + '/' + x + '/' + y + '.' + this.format;
-		});
+		return this.loadImage(this.address + 'styles/' + this.theme + '/' + zoom + '/' + x + '/' + y + '.' + this.format, signal);
 	}
 }

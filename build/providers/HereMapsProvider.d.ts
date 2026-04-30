@@ -12,5 +12,5 @@ export declare class HereMapsProvider extends MapProvider {
     constructor(appId?: string, appCode?: string, style?: string, scheme?: string, format?: string, size?: number);
     nextServer(): void;
     getMetaData(): Promise<void>;
-    fetchTile(zoom: number, x: number, y: number): Promise<any>;
+    fetchTile(zoom: number, x: number, y: number, signal?: AbortSignal): Promise<any>;
 }

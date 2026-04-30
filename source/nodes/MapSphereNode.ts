@@ -1,4 +1,4 @@
-import {Matrix4, BufferGeometry, Quaternion, Vector3, Raycaster, Intersection, ShaderMaterial, TextureLoader, Texture, Vector4, REVISION} from 'three';
+import {Matrix4, BufferGeometry, Quaternion, Vector3, Raycaster, Intersection, ShaderMaterial, Texture, Vector4, REVISION, LinearFilter, RGBAFormat} from 'three';
 import {MapNode, QuadTreePosition} from './MapNode';
 import {MapSphereNodeGeometry} from '../geometries/MapSphereNodeGeometry';
 import {UnitsUtils} from '../utils/UnitsUtils';
@@ -39,16 +39,20 @@ export class MapSphereNode extends MapNode
 
 		// Load shaders
 		const vertexShader = `
+		#include <common>
+		#include <logdepthbuf_pars_vertex>
 		varying vec3 vPosition;
 
 		void main() {
 			vPosition = position;
 			gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+			#include <logdepthbuf_vertex>
 		}
 		`;
 
 		const fragmentShader = `
-		#define PI 3.1415926538
+		#include <common>
+		#include <logdepthbuf_pars_fragment>
 		varying vec3 vPosition;
 		uniform sampler2D uTexture;
 		uniform vec4 webMercatorBounds;
@@ -67,6 +71,7 @@ export class MapSphereNode extends MapNode
 
 			vec4 color = texture2D(uTexture, vec2(x, y));
 			gl_FragColor = color;
+			#include <logdepthbuf_fragment>
 			${
 	parseInt(REVISION) < 152 ? '' : `
 				#include <tonemapping_fragment>
@@ -131,19 +136,25 @@ export class MapSphereNode extends MapNode
 	}
 	
 	public async applyTexture(image: HTMLImageElement): Promise<void>
-	{		
-		const textureLoader = new TextureLoader();
-		const texture = textureLoader.load(image.src, function() 
+	{
+		if (this.disposed) 
 		{
-			if (parseInt(REVISION) >= 152) 
-			{
-				texture.colorSpace = 'srgb';
-			}
-		});
+			return;
+		}
+
+		const texture = new Texture(image);
+		if (parseInt(REVISION) >= 152) 
+		{
+			texture.colorSpace = 'srgb';
+		}
+		texture.generateMipmaps = false;
+		texture.format = RGBAFormat;
+		texture.magFilter = LinearFilter;
+		texture.minFilter = LinearFilter;
+		texture.needsUpdate = true;
+
 		// @ts-ignore
 		this.material.uniforms.uTexture.value = texture;
-		// @ts-ignore
-		this.material.uniforms.uTexture.needsUpdate = true;
 	}
 
 	/** 
@@ -176,7 +187,15 @@ export class MapSphereNode extends MapNode
 	{
 		if (this.matrixWorldNeedsUpdate || force) 
 		{
-			this.matrixWorld.copy(this.matrix);
+			if (this.parent !== null) 
+			{
+				this.matrixWorld.multiplyMatrices(this.parent.matrixWorld, this.matrix);
+			}
+			else 
+			{
+				this.matrixWorld.copy(this.matrix);
+			}
+
 			this.matrixWorldNeedsUpdate = false;
 		}
 	}

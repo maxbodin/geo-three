@@ -17,5 +17,5 @@ export declare class BingMapsProvider extends MapProvider {
     static OBLIQUE_LABELS: string;
     getMetaData(): Promise<void>;
     static quadKey(zoom: number, x: number, y: number): string;
-    fetchTile(zoom: number, x: number, y: number): Promise<any>;
+    fetchTile(zoom: number, x: number, y: number, signal?: AbortSignal): Promise<any>;
 }
