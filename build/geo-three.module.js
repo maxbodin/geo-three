@@ -113,7 +113,7 @@ class MapProvider {
         });
     }
     createTileCacheKey(zoom, x, y) {
-        return zoom + '/' + x + '/' + y;
+        return `${zoom}/${x}/${y}`;
     }
     createAbortError() {
         if (typeof DOMException !== 'undefined') {
@@ -230,6 +230,7 @@ class MapNode extends Mesh {
         this.parentNode = null;
         this.subdivided = false;
         this.disposed = false;
+        this.ready = false;
         this.nodesLoaded = 0;
         this.childrenCache = null;
         this.isMesh = true;
@@ -255,18 +256,22 @@ class MapNode extends Mesh {
             return;
         }
         if (this.mapView.cacheTiles && this.childrenCache !== null) {
-            this.isMesh = false;
             this.children = this.childrenCache;
-            this.nodesLoaded = this.childrenCache.length;
+            this.nodesLoaded = this.countReadyChildren(this.children);
             this.applyMapViewRenderOrderToChildren();
         }
         else {
+            this.nodesLoaded = 0;
             this.createChildNodes();
             this.applyMapViewRenderOrderToChildren();
         }
         this.subdivided = true;
+        this.updateChildrenVisibility();
     }
     simplify() {
+        if (!this.subdivided) {
+            return;
+        }
         const minZoom = this.mapView.minZoom();
         if (this.level - 1 < minZoom) {
             return;
@@ -339,22 +344,16 @@ class MapNode extends Mesh {
     }
     nodeReady() {
         if (this.disposed) {
-            console.warn('Geo-Three: nodeReady() called for disposed node.', this);
-            this.dispose();
             return;
         }
+        if (this.ready) {
+            return;
+        }
+        this.ready = true;
         this.applyMapViewRenderOrder();
         if (this.parentNode !== null) {
             this.parentNode.nodesLoaded++;
-            if (this.parentNode.nodesLoaded === MapNode.childrens) {
-                if (this.parentNode.subdivided === true) {
-                    this.parentNode.isMesh = false;
-                }
-                for (let i = 0; i < this.parentNode.children.length; i++) {
-                    this.parentNode.children[i].applyMapViewRenderOrder();
-                    this.parentNode.children[i].visible = true;
-                }
-            }
+            this.parentNode.updateChildrenVisibility();
             if (this.parentNode.nodesLoaded > MapNode.childrens) {
                 console.error('Geo-Three: Loaded more children objects than expected.', this.parentNode.nodesLoaded, this);
             }
@@ -391,6 +390,31 @@ class MapNode extends Mesh {
         for (let i = 0; i < this.children.length; i++) {
             this.children[i].applyMapViewRenderOrder();
         }
+    }
+    updateChildrenVisibility() {
+        if (this.nodesLoaded !== MapNode.childrens) {
+            return;
+        }
+        if (this.subdivided === true) {
+            this.isMesh = false;
+        }
+        const children = this.children.length > 0 ? this.children : this.childrenCache;
+        if (children === null) {
+            return;
+        }
+        for (let i = 0; i < children.length; i++) {
+            children[i].applyMapViewRenderOrder();
+            children[i].visible = true;
+        }
+    }
+    countReadyChildren(children) {
+        let readyChildren = 0;
+        for (let i = 0; i < children.length; i++) {
+            if (children[i].ready) {
+                readyChildren++;
+            }
+        }
+        return readyChildren;
     }
     applyMaterialFactory() {
         var _a;
@@ -1702,24 +1726,52 @@ MapView.mapModes = new Map([
 
 const pov$2 = new Vector3();
 const position$2 = new Vector3();
+const scale = new Vector3();
+const PLANAR_SCALE_RATIO = 1000;
 class LODRadial {
     constructor(subdivideDistance = 50, simplifyDistance = 300) {
         this.subdivideDistance = subdivideDistance;
         this.simplifyDistance = simplifyDistance;
     }
     updateLOD(view, camera, renderer, scene) {
+        const root = view.children[0];
+        if (root === undefined) {
+            return;
+        }
         camera.getWorldPosition(pov$2);
-        view.children[0].traverse((node) => {
-            node.getWorldPosition(position$2);
-            let distance = pov$2.distanceTo(position$2);
-            distance /= Math.pow(2, view.provider.maxZoom - node.level);
+        const nodes = [];
+        root.traverse((node) => {
+            nodes.push(node);
+        });
+        for (let i = 0; i < nodes.length; i++) {
+            const node = nodes[i];
+            let distance = this.distanceToNode(node);
+            const zoomDelta = Math.max(view.provider.maxZoom - node.level, 0);
+            distance /= Math.pow(2, zoomDelta);
             if (distance < this.subdivideDistance) {
                 node.subdivide();
             }
             else if (distance > this.simplifyDistance && node.parentNode) {
                 node.parentNode.simplify();
             }
-        });
+        }
+    }
+    distanceToNode(node) {
+        node.getWorldPosition(position$2);
+        node.getWorldScale(scale);
+        if (this.isPlanarTileScale(scale)) {
+            const halfWidth = Math.abs(scale.x) * 0.5;
+            const halfDepth = Math.abs(scale.z) * 0.5;
+            const dx = Math.max(Math.abs(pov$2.x - position$2.x) - halfWidth, 0);
+            const dy = Math.abs(pov$2.y - position$2.y);
+            const dz = Math.max(Math.abs(pov$2.z - position$2.z) - halfDepth, 0);
+            return Math.sqrt(dx * dx + dy * dy + dz * dz);
+        }
+        return pov$2.distanceTo(position$2);
+    }
+    isPlanarTileScale(nodeScale) {
+        const yScale = Math.max(Math.abs(nodeScale.y), 1);
+        return Math.abs(nodeScale.x) / yScale > PLANAR_SCALE_RATIO && Math.abs(nodeScale.z) / yScale > PLANAR_SCALE_RATIO;
     }
 }
 

@@ -18,6 +18,7 @@ export declare abstract class MapNode extends Mesh {
     y: number;
     subdivided: boolean;
     disposed: boolean;
+    ready: boolean;
     nodesLoaded: number;
     childrenCache: Object3D[];
     static baseGeometry: BufferGeometry;
@@ -37,6 +38,8 @@ export declare abstract class MapNode extends Mesh {
     dispose(): void;
     protected applyMapViewRenderOrder(): void;
     private applyMapViewRenderOrderToChildren;
+    private updateChildrenVisibility;
+    private countReadyChildren;
     private applyMaterialFactory;
     protected isAbortError(error: any): boolean;
     private createAbortError;

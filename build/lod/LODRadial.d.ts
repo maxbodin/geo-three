@@ -6,4 +6,6 @@ export declare class LODRadial implements LODControl {
     simplifyDistance: number;
     constructor(subdivideDistance?: number, simplifyDistance?: number);
     updateLOD(view: MapView, camera: Camera, renderer: WebGLRenderer, scene: Object3D): void;
+    private distanceToNode;
+    private isPlanarTileScale;
 }

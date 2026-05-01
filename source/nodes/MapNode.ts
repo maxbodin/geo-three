@@ -103,6 +103,11 @@ export abstract class MapNode extends Mesh
 	public disposed: boolean = false;
 
 	/**
+	 * Flag to indicate if the map node finished loading and notified its parent.
+	 */
+	public ready: boolean = false;
+
+	/**
 	 * Indicates how many children nodes are loaded.
 	 * 
 	 * The child on become visible once all of them are loaded.
@@ -195,19 +200,19 @@ export abstract class MapNode extends Mesh
 
 		if (this.mapView.cacheTiles && this.childrenCache !== null) 
 		{
-			// @ts-ignore
-			this.isMesh = false;
 			this.children = this.childrenCache;
-			this.nodesLoaded = this.childrenCache.length;
+			this.nodesLoaded = this.countReadyChildren(this.children);
 			this.applyMapViewRenderOrderToChildren();
 		}
 		else 
 		{
+			this.nodesLoaded = 0;
 			this.createChildNodes();
 			this.applyMapViewRenderOrderToChildren();
 		}
 
 		this.subdivided = true;
+		this.updateChildrenVisibility();
 	}
 
 	/**
@@ -219,6 +224,11 @@ export abstract class MapNode extends Mesh
 	 */
 	public simplify(): void
 	{
+		if (!this.subdivided)
+		{
+			return;
+		}
+
 		const minZoom = this.mapView.minZoom();
 		if (this.level - 1 < minZoom)
 		{
@@ -333,10 +343,18 @@ export abstract class MapNode extends Mesh
 	{
 		if (this.disposed) 
 		{
-			console.warn('Geo-Three: nodeReady() called for disposed node.', this);
-			this.dispose();
+			// Dispose should not be callled here.
+			//console.warn('Geo-Three: nodeReady() called for disposed node.', this);
+			//this.dispose();
 			return;
 		}
+
+		if (this.ready)
+		{
+			return;
+		}
+
+		this.ready = true;
 
 		this.applyMapViewRenderOrder();
 
@@ -344,20 +362,7 @@ export abstract class MapNode extends Mesh
 		{
 			this.parentNode.nodesLoaded++;
 
-			if (this.parentNode.nodesLoaded === MapNode.childrens) 
-			{
-				if (this.parentNode.subdivided === true) 
-				{
-					// @ts-ignore
-					this.parentNode.isMesh = false;
-				}
-				
-				for (let i = 0; i < this.parentNode.children.length; i++) 
-				{
-					(this.parentNode.children[i] as MapNode).applyMapViewRenderOrder();
-					this.parentNode.children[i].visible = true;
-				}
-			}
+			this.parentNode.updateChildrenVisibility();
 
 			if (this.parentNode.nodesLoaded > MapNode.childrens) 
 			{
@@ -419,6 +424,46 @@ export abstract class MapNode extends Mesh
 		{
 			(this.children[i] as MapNode).applyMapViewRenderOrder();
 		}
+	}
+
+	private updateChildrenVisibility(): void
+	{
+		if (this.nodesLoaded !== MapNode.childrens)
+		{
+			return;
+		}
+
+		if (this.subdivided === true)
+		{
+			// @ts-ignore
+			this.isMesh = false;
+		}
+
+		const children = this.children.length > 0 ? this.children : this.childrenCache;
+		if (children === null)
+		{
+			return;
+		}
+
+		for (let i = 0; i < children.length; i++)
+		{
+			(children[i] as MapNode).applyMapViewRenderOrder();
+			children[i].visible = true;
+		}
+	}
+
+	private countReadyChildren(children: Object3D[]): number
+	{
+		let readyChildren = 0;
+		for (let i = 0; i < children.length; i++)
+		{
+			if ((children[i] as MapNode).ready)
+			{
+				readyChildren++;
+			}
+		}
+
+		return readyChildren;
 	}
 
 	private applyMaterialFactory(): void
